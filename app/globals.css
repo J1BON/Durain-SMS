@@ -1,0 +1,125 @@
+@import "tailwindcss";
+@plugin "daisyui" {
+  themes: light --default, dark;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --color-primary: oklch(28% 0.02 75);
+  --color-primary-content: oklch(98% 0.01 75);
+  --color-base-100: oklch(99% 0.002 75);
+  --color-base-200: oklch(96% 0.004 75);
+  --color-base-300: oklch(90% 0.006 75);
+  --color-base-content: oklch(22% 0.02 75);
+}
+
+/* Cursor-style dark: neutral grays, #1c1c1c canvas */
+[data-theme="dark"] {
+  color-scheme: dark;
+  --color-base-200: #1c1c1c;
+  --color-base-100: #252526;
+  --color-base-300: #3c3c3c;
+  --color-base-content: #cccccc;
+  --color-primary: #e4e4e4;
+  --color-primary-content: #1c1c1c;
+  --color-neutral: #2d2d2d;
+  --color-neutral-content: #cccccc;
+}
+
+[data-theme="dark"] .card,
+[data-theme="dark"] .select,
+[data-theme="dark"] .input,
+[data-theme="dark"] .btn-outline {
+  --tw-shadow: 0 0 #0000;
+  box-shadow: none;
+}
+
+[data-theme="dark"] .select,
+[data-theme="dark"] .input {
+  background-color: #252526;
+  border-color: #3c3c3c;
+}
+
+[data-theme="dark"] .select:focus,
+[data-theme="dark"] .input:focus {
+  border-color: #5a5a5a;
+  outline: none;
+}
+
+[data-theme="dark"] .btn-primary {
+  background-color: #e4e4e4;
+  color: #1c1c1c;
+  border-color: #e4e4e4;
+}
+
+[data-theme="dark"] .btn-primary:hover {
+  background-color: #ffffff;
+  border-color: #ffffff;
+}
+
+[data-theme="dark"] .btn-ghost:hover {
+  background-color: #2a2d2e;
+}
+
+[data-theme="dark"] .alert-error {
+  background-color: #3a2224;
+  border-color: #5c3034;
+  color: #f0c6c8;
+}
+
+@theme {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  @apply bg-base-200 text-base-content antialiased;
+}
+
+.pulse-dot {
+  @apply relative inline-flex h-2.5 w-2.5;
+}
+
+.pulse-dot::before {
+  content: "";
+  @apply absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60;
+}
+
+.pulse-dot::after {
+  content: "";
+  @apply relative inline-flex h-2.5 w-2.5 rounded-full bg-primary;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse-dot::before {
+    animation: none;
+    opacity: 0.4;
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.phone-display {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  word-break: normal;
+}
+
+.code-display {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.35em;
+  word-break: normal;
+}
+
+/* Hide Next.js dev toolbar / N badge in development */
+nextjs-portal,
+[data-nextjs-dev-toolbar],
+[data-nextjs-toast],
+#__next-build-watcher {
+  display: none !important;
+}

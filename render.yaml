@@ -1,0 +1,17 @@
+# Optional: Render Blueprint — import at https://dashboard.render.com/blueprints
+services:
+  - type: web
+    name: durain-sms
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /login
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DURIAN_AUTO_SYNC_MINUTES
+        value: "30"
+      # Set these in the Render dashboard (secrets):
+      # DURIAN_USERNAME, DURIAN_API_KEY, DURIAN_WEB_PASSWORD
+      # DURIAN_SESSION_COOKIE, SITE_AUTH_USERNAME, SITE_AUTH_PASSWORD, SITE_AUTH_SECRET
