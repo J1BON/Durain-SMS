@@ -510,16 +510,30 @@ export default function HomePage() {
       const body = (await readApiJson(res)) as {
         error?: string;
         pending?: boolean;
-        code?: string;
+        code?: string | number;
       };
 
       if (res.status === 202 || body.pending) {
         setWaitingSms(true);
+        setError(null);
         return;
       }
 
       if (!res.ok) {
-        throw new Error(body.error ?? "Failed to check SMS");
+        const apiCode =
+          typeof body.code === "number"
+            ? body.code
+            : Number(body.code) || 0;
+        const msg = body.error ?? "Failed to check SMS";
+        const keepWaiting =
+          apiCode === 907 ||
+          apiCode === 908 ||
+          /failed to receive sms|message record|not received yet/i.test(msg);
+        if (keepWaiting) {
+          setWaitingSms(true);
+          return;
+        }
+        throw new Error(msg);
       }
 
       if (body.code) {

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { DurianApiError, fetchDurian, isDurianSmsStillWaiting } from "@/lib/durian-api";
 import { pnVariantsForDurianMsg } from "@/lib/durian-phone";
-import { DurianApiError, fetchDurian } from "@/lib/durian-api";
 
 export const dynamic = "force-dynamic";
 
@@ -21,48 +21,57 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const serial = request.nextUrl.searchParams.get("serial") ?? "2";
+  const serialParam = request.nextUrl.searchParams.get("serial") ?? "2";
+  const primarySerial = serialParam === "1" ? 1 : 2;
+  const serialsToTry: (1 | 2)[] =
+    primarySerial === 1 ? [1, 2] : [2, 1];
+
   const variants = pnVariantsForDurianMsg(pnRaw);
-  let last908: string | null = null;
+  let lastPending: string | null = null;
   let lastError: DurianApiError | null = null;
 
   for (const pn of variants) {
-    try {
-      const { data } = await fetchDurian<string>("getMsg", { pn, pid, serial });
-      const code = extractSmsCode(data);
+    for (const serial of serialsToTry) {
+      try {
+        const { data } = await fetchDurian<string>("getMsg", {
+          pn,
+          pid,
+          serial,
+        });
+        const code = extractSmsCode(data);
 
-      if (code) {
-        return NextResponse.json({ code, pending: false });
-      }
+        if (code) {
+          return NextResponse.json({ code, pending: false, serial });
+        }
 
-      last908 = "SMS not received yet";
-    } catch (err) {
-      if (err instanceof DurianApiError) {
-        if (err.apiCode === 908) {
-          last908 = err.message;
-          continue;
+        lastPending = "SMS not received yet";
+      } catch (err) {
+        if (err instanceof DurianApiError) {
+          if (isDurianSmsStillWaiting(err.apiCode, err.message)) {
+            lastPending = err.message;
+            continue;
+          }
+          if (err.apiCode === 905) {
+            lastError = err;
+            continue;
+          }
+          return NextResponse.json(
+            { error: err.message, code: err.apiCode },
+            { status: err.httpStatus },
+          );
         }
-        /** Wrong phone format for this session — try next variant. */
-        if (err.apiCode === 905) {
-          lastError = err;
-          continue;
-        }
+        console.error("[api/checkSms]", err);
         return NextResponse.json(
-          { error: err.message, code: err.apiCode },
-          { status: err.httpStatus },
+          { error: "Failed to check SMS" },
+          { status: 500 },
         );
       }
-      console.error("[api/checkSms]", err);
-      return NextResponse.json(
-        { error: "Failed to check SMS" },
-        { status: 500 },
-      );
     }
   }
 
-  if (last908) {
+  if (lastPending) {
     return NextResponse.json(
-      { pending: true, message: last908 },
+      { pending: true, message: lastPending },
       { status: 202 },
     );
   }

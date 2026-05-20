@@ -69,7 +69,6 @@ export function mapApiCodeToHttpStatus(code: number): number {
     case 904:
     case 905:
     case 906:
-    case 907:
     case 400101:
     case 400102:
     case 400103:
@@ -78,6 +77,8 @@ export function mapApiCodeToHttpStatus(code: number): number {
     case 406:
     case 200408:
       return 429;
+    /** Durian often returns 907 while SMS is still in transit — keep polling (not a hard stop). */
+    case 907:
     case 908:
       return 202;
     case 201:
@@ -105,12 +106,27 @@ export function humanizeApiError(code: number, msg: string): string {
     904: "Invalid project ID",
     905: "Invalid phone number",
     906: "No phone numbers available",
+    907: "SMS not received yet — keep waiting (check Message Record on Durian if this persists)",
     908: "SMS not received yet — keep waiting",
     406: "Daily new-number limit reached",
     200408: "Number acquisition limit reached",
   };
 
   return messages[code] ?? msg ?? "Request failed";
+}
+
+/** True when getMsg should keep polling instead of showing a fatal error. */
+export function isDurianSmsStillWaiting(apiCode: number, msg: string): boolean {
+  if (apiCode === 907 || apiCode === 908 || apiCode === 201 || apiCode === 202 || apiCode === 203) {
+    return true;
+  }
+  const m = msg.toLowerCase();
+  return (
+    m.includes("failed to receive sms") ||
+    m.includes("message record") ||
+    m.includes("not received yet") ||
+    m.includes("not received")
+  );
 }
 
 const DURIAN_FETCH_TIMEOUT_MS = 25_000;
