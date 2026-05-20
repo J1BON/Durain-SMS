@@ -45,8 +45,10 @@ import {
   US_COUNTRY_CODE,
 } from "@/lib/country-list";
 
-const POLL_INTERVAL_MS = 15_000;
-const NUMBER_TTL_MS = 5 * 60 * 1000;
+/** Durian panel polls much faster than 15s — slow polling misses short-lived SMS. */
+const SMS_POLL_MS = 4_000;
+const SMS_POLL_BURST_MS = [2_000, 4_000, 7_000, 11_000, 16_000] as const;
+const NUMBER_TTL_MS = 10 * 60 * 1000;
 const SEARCH_DEBOUNCE_MS = 120;
 const BALANCE_SYNC_MS = 30_000;
 const COUNTRY_SYNC_MS = 45_000;
@@ -104,6 +106,7 @@ export default function HomePage() {
   } = useFavorites();
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const smsPollInFlight = useRef(false);
   const toastId = useRef(0);
   const expiryNotified = useRef(false);
   const countryFetchGen = useRef(0);
@@ -484,8 +487,9 @@ export default function HomePage() {
   }, [selectedServicePid, loadingNumber, phoneNumber, loadCountries]);
 
   const checkSms = useCallback(async () => {
-    if (!phoneNumber) return;
+    if (!phoneNumber || smsPollInFlight.current) return;
 
+    smsPollInFlight.current = true;
     setPolling(true);
     try {
       const params = new URLSearchParams({
@@ -533,6 +537,7 @@ export default function HomePage() {
       }
       setError(e instanceof Error ? e.message : "SMS check failed");
     } finally {
+      smsPollInFlight.current = false;
       setPolling(false);
     }
   }, [phoneNumber, selectedService, orderSerial, showToast]);
@@ -543,11 +548,16 @@ export default function HomePage() {
     setWaitingSms(true);
     void checkSms();
 
+    const burstTimers = SMS_POLL_BURST_MS.map((delay) =>
+      setTimeout(() => void checkSms(), delay),
+    );
+
     pollRef.current = setInterval(() => {
       void checkSms();
-    }, POLL_INTERVAL_MS);
+    }, SMS_POLL_MS);
 
     return () => {
+      burstTimers.forEach((id) => clearTimeout(id));
       if (pollRef.current) {
         clearInterval(pollRef.current);
         pollRef.current = null;
@@ -591,17 +601,24 @@ export default function HomePage() {
       const body = (await readApiJson(res)) as {
         error?: string;
         phoneNumber?: string;
+        apiPn?: string;
       };
 
       if (!res.ok) {
         throw new Error(body.error ?? "Failed to get number");
       }
 
-      if (typeof body.phoneNumber !== "string" || !body.phoneNumber) {
+      const apiPn =
+        typeof body.apiPn === "string" && body.apiPn
+          ? body.apiPn
+          : typeof body.phoneNumber === "string"
+            ? body.phoneNumber
+            : "";
+      if (!apiPn) {
         throw new Error("Invalid response: missing phone number");
       }
 
-      setPhoneNumber(body.phoneNumber);
+      setPhoneNumber(apiPn);
       setNumberExpiresAt(Date.now() + NUMBER_TTL_MS);
     } catch (e) {
       setError(

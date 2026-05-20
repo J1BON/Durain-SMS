@@ -2,6 +2,14 @@ export type CountryOption = { code: string; stock: number; label?: string };
 
 export const US_COUNTRY_CODE = "us";
 
+/** Value sent to Durian getMobile `cuy` (panel shows USA, not `us`). */
+export function cuyForDurianApi(code: string): string {
+  const c = normalizeCountryCode(code);
+  if (c === US_COUNTRY_CODE) return "usa";
+  if (c === "*") return "*";
+  return c;
+}
+
 export function normalizeCountryCode(code: string): string {
   const trimmed = code.trim();
   if (trimmed === "*") return "*";

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { cuyForDurianApi } from "@/lib/country-list";
 import { DurianApiError, fetchDurian, parsePhoneData } from "@/lib/durian-api";
 
 export async function GET(request: NextRequest) {
@@ -25,16 +26,17 @@ export async function GET(request: NextRequest) {
     };
 
     if (cuy && cuy !== "*" && cuy !== "all") {
-      params.cuy = cuy;
+      params.cuy = cuyForDurianApi(cuy);
     }
 
     const { data, raw } = await fetchDurian<string>("getMobile", params);
-    const phoneNumber = parsePhoneData(
-      typeof data === "string" ? data : String(data),
-    );
+    const rawData =
+      typeof data === "string" ? data : data != null ? String(data) : "";
+    const apiPn = parsePhoneData(rawData);
 
     return NextResponse.json({
-      phoneNumber,
+      phoneNumber: apiPn,
+      apiPn,
       raw: raw.data,
     });
   } catch (err) {
