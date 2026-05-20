@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
   Ban,
   Check,
@@ -1243,7 +1244,12 @@ export default function HomePage() {
       </div>
 
       <footer className="mt-auto pt-10 text-center text-xs text-base-content/40">
-        Secured via server proxy · Keys never exposed
+        <p>Secured via server proxy · Keys never exposed</p>
+        <p className="mt-2">
+          <Link href="/panel-refresh" className="link link-hover text-base-content/50">
+            Renew Durian panel session (phone / no PC)
+          </Link>
+        </p>
       </footer>
     </div>
   );

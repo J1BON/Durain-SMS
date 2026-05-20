@@ -256,7 +256,17 @@ async function writePanelNamesCache(map: Map<number, string>): Promise<void> {
 async function getPanelCookieHeader(): Promise<string | null> {
   const envCookie = cookieHeaderFromEnv();
   const cached = await readCachedPanelCookies();
-  return envCookie ?? (cached ? cookieHeaderFromMap(cached) : null);
+  const disk =
+    cached && Object.keys(cached).length > 0
+      ? cookieHeaderFromMap(cached)
+      : null;
+
+  const rawPrefer = process.env.DURIAN_USE_DISK_PANEL_COOKIE?.trim() ?? "";
+  const preferDisk =
+    rawPrefer === "1" || rawPrefer.toLowerCase() === "true";
+
+  if (preferDisk) return disk ?? envCookie ?? null;
+  return envCookie ?? disk ?? null;
 }
 
 function panelAjaxHeaders(cookieHeader: string): Record<string, string> {
@@ -540,24 +550,21 @@ async function parsePanelJsonResponse<T>(res: Response): Promise<T> {
   }
 }
 
-export async function loginToPanel(options: {
+/**
+ * Finish panel login after captcha image was loaded for this same `jar`
+ * (e.g. browser hit GET /api/panel/captcha which sealed this jar in a cookie).
+ */
+export async function completePanelLoginWithJar(options: {
+  jar: PanelCookies;
   username: string;
   password: string;
   captcha: string;
   language?: string;
 }): Promise<PanelCookies> {
-  const jar: PanelCookies = {};
-
-  await beginPanelSession(jar);
-
-  const captchaRes = await fetch(`${PANEL_BASE}/valdatioCode`, {
-    headers: { Cookie: cookieHeaderFromMap(jar) },
-    cache: "no-store",
-  });
-  mergeSetCookie(jar, getSetCookies(captchaRes.headers));
+  const { jar, username, password, captcha, language } = options;
 
   const verifyRes = await fetch(
-    `${PANEL_BASE}/doCheckVerify?code=${encodeURIComponent(options.captcha)}`,
+    `${PANEL_BASE}/doCheckVerify?code=${encodeURIComponent(captcha)}`,
     {
       headers: { Cookie: cookieHeaderFromMap(jar) },
       cache: "no-store",
@@ -571,9 +578,9 @@ export async function loginToPanel(options: {
   }
 
   const body = new URLSearchParams({
-    n: options.username,
-    p: options.password,
-    l: options.language ?? "en",
+    n: username,
+    p: password,
+    l: language ?? "en",
   });
 
   const loginRes = await fetch(PANEL_LOGIN_PAGE, {
@@ -599,6 +606,25 @@ export async function loginToPanel(options: {
   return jar;
 }
 
+export async function loginToPanel(options: {
+  username: string;
+  password: string;
+  captcha: string;
+  language?: string;
+}): Promise<PanelCookies> {
+  const jar: PanelCookies = {};
+
+  await beginPanelSession(jar);
+
+  const captchaRes = await fetch(`${PANEL_BASE}/valdatioCode`, {
+    headers: { Cookie: cookieHeaderFromMap(jar) },
+    cache: "no-store",
+  });
+  mergeSetCookie(jar, getSetCookies(captchaRes.headers));
+
+  return completePanelLoginWithJar({ jar, ...options });
+}
+
 function getSetCookies(headers: Headers): string[] {
   if (typeof headers.getSetCookie === "function") {
     return headers.getSetCookie();
@@ -614,4 +640,12 @@ function mergeSetCookie(jar: PanelCookies, setCookies: string[]): void {
     if (eq === -1) continue;
     jar[part.slice(0, eq).trim()] = part.slice(eq + 1).trim();
   }
+}
+
+/** Merge Set-Cookie from a fetch response into the panel cookie jar (captcha route). */
+export function mergeJarFromResponseHeaders(
+  jar: PanelCookies,
+  headers: Headers,
+): void {
+  mergeSetCookie(jar, getSetCookies(headers));
 }

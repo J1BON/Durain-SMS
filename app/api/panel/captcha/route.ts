@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
-import { beginPanelSession } from "@/lib/durian-panel";
-import type { PanelCookies } from "@/lib/durian-panel";
+import {
+  beginPanelSession,
+  mergeJarFromResponseHeaders,
+  type PanelCookies,
+} from "@/lib/durian-panel";
+import {
+  PANEL_CHALLENGE_COOKIE,
+  sealPanelChallengeJar,
+} from "@/lib/panel-challenge-cookie";
 
 export const dynamic = "force-dynamic";
 
@@ -27,9 +34,9 @@ export async function GET() {
       );
     }
 
-    const buffer = await res.arrayBuffer();
-    const setCookie = res.headers.get("set-cookie");
+    mergeJarFromResponseHeaders(jar, res.headers);
 
+    const buffer = await res.arrayBuffer();
     const response = new NextResponse(buffer, {
       status: 200,
       headers: {
@@ -38,9 +45,15 @@ export async function GET() {
       },
     });
 
-    if (setCookie) {
-      response.headers.set("x-panel-set-cookie", setCookie);
-    }
+    const sealed = sealPanelChallengeJar(jar);
+    const secure = process.env.NODE_ENV === "production";
+    response.cookies.set(PANEL_CHALLENGE_COOKIE, sealed, {
+      httpOnly: true,
+      secure,
+      sameSite: "lax",
+      maxAge: 12 * 60,
+      path: "/",
+    });
 
     return response;
   } catch (err) {

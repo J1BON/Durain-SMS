@@ -24,14 +24,18 @@ This guide uses **[Render](https://render.com)** (free web service) — best fit
 
 2. **Panel session for the cloud** (required for full service list):
 
+   **Option A — from your phone (no PC):** after deploy, sign in to your site → open **`/panel-refresh`** (or the footer link), solve the captcha, tap **Link Durian panel**. On Render set **`DURIAN_USE_DISK_PANEL_COOKIE=1`** so this session is preferred over a stale `DURIAN_SESSION_COOKIE`. You may clear `DURIAN_SESSION_COOKIE` in the dashboard when using disk-first mode.
+
+   **Option B — from your PC:**
+
    ```bash
    npm run panel-login
    npm run export-panel-cookie
    ```
 
-   Copy the printed line — you will paste it as `DURIAN_SESSION_COOKIE` on Render.
+   Copy the printed line — paste as `DURIAN_SESSION_COOKIE` on Render.
 
-   When that session expires (weeks/months), repeat and update the env var on Render.
+   When the session expires, use **Option A** or repeat **Option B** and update the env var.
 
 3. Push the project to **GitHub** (private repo recommended):
 

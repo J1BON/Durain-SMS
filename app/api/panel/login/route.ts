@@ -1,8 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
-import { loginToPanel } from "@/lib/durian-panel";
+import {
+  completePanelLoginWithJar,
+  type PanelCookies,
+} from "@/lib/durian-panel";
 import { getServices } from "@/lib/discover-services";
+import {
+  PANEL_CHALLENGE_COOKIE,
+  unsealPanelChallengeJar,
+} from "@/lib/panel-challenge-cookie";
 
 export const dynamic = "force-dynamic";
+
+function jsonWithClearedChallenge(
+  body: Record<string, unknown>,
+  status: number,
+): NextResponse {
+  const res = NextResponse.json(body, { status });
+  res.cookies.delete(PANEL_CHALLENGE_COOKIE);
+  return res;
+}
 
 export async function POST(request: NextRequest) {
   const username = process.env.DURIAN_USERNAME;
@@ -38,22 +54,44 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "captcha is required" }, { status: 400 });
   }
 
+  const challenge = request.cookies.get(PANEL_CHALLENGE_COOKIE)?.value;
+  const jarFromBrowser = unsealPanelChallengeJar(challenge);
+
+  if (!jarFromBrowser) {
+    return jsonWithClearedChallenge(
+      {
+        error:
+          "Captcha session missing or expired. Open Panel login, load a fresh image, then try again.",
+      },
+      400,
+    );
+  }
+
   try {
-    await loginToPanel({ username, password, captcha });
+    await completePanelLoginWithJar({
+      jar: jarFromBrowser as PanelCookies,
+      username,
+      password,
+      captcha,
+    });
+
     const result = await getServices({ forceRefresh: true });
 
-    return NextResponse.json({
-      ok: true,
-      message: "Panel linked successfully",
-      count: result.services.length,
-    });
+    return jsonWithClearedChallenge(
+      {
+        ok: true,
+        message: "Panel linked successfully",
+        count: result.services.length,
+      },
+      200,
+    );
   } catch (err) {
     console.error("[api/panel/login]", err);
-    return NextResponse.json(
+    return jsonWithClearedChallenge(
       {
         error: err instanceof Error ? err.message : "Panel login failed",
       },
-      { status: 400 },
+      400,
     );
   }
 }

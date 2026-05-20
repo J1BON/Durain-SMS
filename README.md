@@ -193,14 +193,15 @@ You should see the **new account’s balance** and full service list.
 | `DURIAN_USERNAME` | Yes | DurianRCS account username |
 | `DURIAN_API_KEY` | Yes | DurianRCS API key |
 | `DURIAN_WEB_PASSWORD` | Yes* | Web panel password (`panel-login`) |
-| `DURIAN_SESSION_COOKIE` | Yes** | Panel cookie string (cloud / or skip if using local cache) |
+| `DURIAN_SESSION_COOKIE` | Yes** | Panel cookie string; optional if you only use `/panel-refresh` + disk (see below) |
+| `DURIAN_USE_DISK_PANEL_COOKIE` | No | Set `1` on cloud hosts to prefer `.cache/panel-cookies.json` (written by `/panel-refresh`) over `DURIAN_SESSION_COOKIE` when both exist |
 | `DURIAN_AUTO_SYNC_MINUTES` | No | Background sync interval (default `30`) |
 | `DURIAN_PANEL_FETCH_MODE` | No | `sequential` on production (avoids 503); `parallel` for fast local |
 | `CRON_SECRET` | No | For `/api/cron/sync` on hosted deploy |
 | `DURIAN_AUTO_SYNC_DISABLED` | No | Set `1` to turn off background sync |
 
 \* Required for `npm run panel-login`  
-\** Required on Render; optional locally if `.cache/panel-cookies.json` exists
+\** On Render you either paste `DURIAN_SESSION_COOKIE`, or rely on **`/panel-refresh`** after each deploy and set `DURIAN_USE_DISK_PANEL_COOKIE=1` (leave env cookie empty or remove when using disk-first mode).
 
 ---
 
@@ -232,6 +233,17 @@ You should see the **new account’s balance** and full service list.
 **Dark / light mode:** Use the moon/sun button (top-left on home, top-right on login).
 
 **Favorites:** Star icon on services and countries (saved in your browser).
+
+### Renewing the Durian panel session (no PC / away from home)
+
+The service catalog comes from the Durian **web** panel; that session expires. You do **not** need your home PC if your app is already deployed:
+
+1. Sign in to this site (same URL you use on your phone).
+2. Open **`/panel-refresh`** — there is also a footer link **“Renew Durian panel session”**.
+3. Wait for the captcha image, type the code, tap **Link Durian panel**.
+4. On **Render**, set **`DURIAN_USE_DISK_PANEL_COOKIE=1`** so the session saved on the server is used **before** an old `DURIAN_SESSION_COOKIE` in environment variables (otherwise the stale env value wins).
+
+After a **new deploy**, the host disk may be empty — run **`/panel-refresh` once** again, or paste a fresh cookie from a PC into `DURIAN_SESSION_COOKIE`.
 
 ---
 
