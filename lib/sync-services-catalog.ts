@@ -20,9 +20,13 @@ export async function syncServicesCatalogFromPanel(): Promise<{
     return { ok: true, count: services.length };
   } catch (err) {
     const message = err instanceof Error ? err.message : "Panel sync failed";
-    const hint = /503|502|429/.test(message)
-      ? " Durian panel was busy — wait 1 minute and tap Sync again."
-      : "";
+    let hint = "";
+    if (/503|502|429/.test(message)) {
+      hint = " Durian panel was busy — wait 1 minute and tap Sync again.";
+    } else if (/session expired|cookie invalid/i.test(message)) {
+      hint =
+        " Run `npm run panel-login` locally, then `npm run export-panel-cookie`, and paste a fresh value into DURIAN_SESSION_COOKIE on your host.";
+    }
     return {
       ok: false,
       count: 0,

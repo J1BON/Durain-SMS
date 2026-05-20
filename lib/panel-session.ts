@@ -19,6 +19,7 @@ export function getPanelSetupHint(hasSession: boolean): string {
   }
   return (
     "Syncing service list from Durian (first load can take 30–60 seconds). " +
+    "Cookies expire — if sync fails, refresh DURIAN_SESSION_COOKIE (panel-login + export-panel-cookie). " +
     "Tap “Sync services” or wait a moment and refresh."
   );
 }

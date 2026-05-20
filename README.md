@@ -267,7 +267,7 @@ Short version:
 | `ENOENT` / Next.js errors | `npm run dev:fresh` or delete `.next` folder |
 | Wrong balance / services | You may still be on old account — see **Using a different Durian account** |
 | Get Number disabled | Wait for countries to load; pick service + country |
-| Panel session expired | `npm run panel-login` → update cookie on cloud |
+| Panel session expired, “HTML instead of JSON”, or sync errors | `DURIAN_SESSION_COOKIE` expired — run `npm run panel-login` → `export-panel-cookie`, paste into Render env, **Manual Deploy**. The server reuses the last saved catalog (`.cache/panel-projects.json`) when the live panel fails. |
 
 ---
 

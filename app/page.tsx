@@ -209,7 +209,15 @@ export default function HomePage() {
       showToast(`Synced ${body.count ?? 0} services`);
       await loadServices({ refresh: true });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Service sync failed");
+      const recovered = await loadServices({ quiet: true });
+      if (recovered > 0) {
+        setError(null);
+        showToast(
+          "Panel sync failed, but a saved service list is available. Refresh DURIAN_SESSION_COOKIE when you can.",
+        );
+      } else {
+        setError(e instanceof Error ? e.message : "Service sync failed");
+      }
     } finally {
       setSyncingServices(false);
     }

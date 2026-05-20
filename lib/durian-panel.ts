@@ -44,7 +44,24 @@ function shouldUseSequentialPanelFetch(): boolean {
 }
 
 function isRetryablePanelStatus(status: number): boolean {
-  return status === 429 || status === 502 || status === 503 || status === 504;
+  return (
+    Number.isFinite(status) &&
+    (status === 429 || status === 502 || status === 503 || status === 504)
+  );
+}
+
+/** Login / session-expired HTML from the Durian panel (not DataTables JSON). */
+function panelHtmlLooksLikeLoginPage(html: string): boolean {
+  const sample = html.slice(0, 12_000);
+  const lower = sample.toLowerCase();
+  return (
+    sample.includes('id="logins"') ||
+    sample.includes('placeholder="用户名"') ||
+    sample.includes("placeholder=\"用户名\"") ||
+    (lower.includes("<form") &&
+      lower.includes("password") &&
+      (lower.includes("login") || lower.includes("sign in")))
+  );
 }
 
 type PanelProjectRow = {
@@ -180,11 +197,7 @@ export async function fetchPanelHtml(cookieHeader: string): Promise<string> {
 
   const html = await res.text();
 
-  if (
-    html.includes('id="logins"') ||
-    html.includes("placeholder=\"用户名\"") ||
-    html.includes('placeholder="用户名"')
-  ) {
+  if (panelHtmlLooksLikeLoginPage(html)) {
     throw new Error(
       "Durian panel session expired. Run npm run panel-login or set DURIAN_SESSION_COOKIE in .env.local",
     );
@@ -286,6 +299,17 @@ async function readPanelProjectsCache(): Promise<Service[] | null> {
   }
 }
 
+/** Last good panel snapshot (ignores TTL) when live panel fetch fails (expired cookie, 503, HTML). */
+async function readPanelProjectsCacheIgnoringAge(): Promise<Service[] | null> {
+  try {
+    const raw = await fs.readFile(PANEL_PROJECTS_CACHE_PATH, "utf8");
+    const parsed = JSON.parse(raw) as PanelProjectsCache;
+    return parsed.services?.length ? parsed.services : null;
+  } catch {
+    return null;
+  }
+}
+
 async function writePanelProjectsCache(services: Service[]): Promise<void> {
   await fs.mkdir(path.dirname(PANEL_PROJECTS_CACHE_PATH), { recursive: true });
   const payload: PanelProjectsCache = {
@@ -332,7 +356,11 @@ async function fetchProjectListPageWithRetry(
       return await fetchProjectListPage(headers, start);
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
-      const retryable = /\(429\)|\(502\)|\(503\)|\(504\)/.test(lastError.message);
+      const statusMatch = /\((\d{3})\)/.exec(lastError.message);
+      const httpStatus = statusMatch ? Number(statusMatch[1]) : NaN;
+      const retryable =
+        isRetryablePanelStatus(httpStatus) ||
+        /\(429\)|\(502\)|\(503\)|\(504\)/.test(lastError.message);
       if (!retryable || attempt === maxAttempts - 1) break;
       await sleep(600 * (attempt + 1));
     }
@@ -385,53 +413,68 @@ export async function fetchAllPanelProjects(options?: {
   }
 
   const cookieHeader = await getPanelCookieHeader();
-  if (!cookieHeader) return [];
+  if (!cookieHeader) {
+    const staleOnly = await readPanelProjectsCacheIgnoringAge();
+    return staleOnly ?? [];
+  }
 
   const headers = panelAjaxHeaders(cookieHeader);
   const byPid = new Map<number, Service>();
 
-  if (shouldUseSequentialPanelFetch()) {
-    await fetchAllPanelProjectsSequential(headers, byPid);
-  } else {
-    const concurrency = getPanelFetchConcurrency();
-    const delayMs = getPanelFetchDelayMs();
+  try {
+    if (shouldUseSequentialPanelFetch()) {
+      await fetchAllPanelProjectsSequential(headers, byPid);
+    } else {
+      const concurrency = getPanelFetchConcurrency();
+      const delayMs = getPanelFetchDelayMs();
 
-    const first = await fetchProjectListPageWithRetry(headers, 0);
-    const total = first.total;
-    mergeProjectRows(byPid, first.rows);
+      const first = await fetchProjectListPageWithRetry(headers, 0);
+      const total = first.total;
+      mergeProjectRows(byPid, first.rows);
 
-    const pageStarts: number[] = [];
-    for (
-      let start = PROJECT_LIST_PAGE_SIZE;
-      start < total;
-      start += PROJECT_LIST_PAGE_SIZE
-    ) {
-      pageStarts.push(start);
+      const pageStarts: number[] = [];
+      for (
+        let start = PROJECT_LIST_PAGE_SIZE;
+        start < total;
+        start += PROJECT_LIST_PAGE_SIZE
+      ) {
+        pageStarts.push(start);
+      }
+
+      for (let i = 0; i < pageStarts.length; i += concurrency) {
+        const batch = pageStarts.slice(i, i + concurrency);
+        const pages = await Promise.all(
+          batch.map((start) => fetchProjectListPageWithRetry(headers, start)),
+        );
+        for (const page of pages) {
+          mergeProjectRows(byPid, page.rows);
+        }
+        if (i + concurrency < pageStarts.length && delayMs > 0) {
+          await sleep(delayMs);
+        }
+      }
     }
 
-    for (let i = 0; i < pageStarts.length; i += concurrency) {
-      const batch = pageStarts.slice(i, i + concurrency);
-      const pages = await Promise.all(
-        batch.map((start) => fetchProjectListPageWithRetry(headers, start)),
+    const services = Array.from(byPid.values()).sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+    );
+
+    if (services.length > 0) {
+      await writePanelProjectsCache(services);
+    }
+
+    return services;
+  } catch (err) {
+    console.error("[fetchAllPanelProjects] live panel fetch failed:", err);
+    const stale = await readPanelProjectsCacheIgnoringAge();
+    if (stale?.length) {
+      console.warn(
+        "[fetchAllPanelProjects] returning stale panel-projects cache after failure",
       );
-      for (const page of pages) {
-        mergeProjectRows(byPid, page.rows);
-      }
-      if (i + concurrency < pageStarts.length && delayMs > 0) {
-        await sleep(delayMs);
-      }
+      return stale;
     }
+    throw err;
   }
-
-  const services = Array.from(byPid.values()).sort((a, b) =>
-    a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
-  );
-
-  if (services.length > 0) {
-    await writePanelProjectsCache(services);
-  }
-
-  return services;
 }
 
 /** Project id → display name from the DurianRCS web panel (Microsoft, Amazon, …). */
@@ -481,8 +524,13 @@ async function parsePanelJsonResponse<T>(res: Response): Promise<T> {
   const text = await res.text();
   const trimmed = text.trim();
   if (trimmed.startsWith("<")) {
+    if (panelHtmlLooksLikeLoginPage(trimmed)) {
+      throw new Error(
+        "Durian panel session expired or cookie invalid. Update DURIAN_SESSION_COOKIE on the server (npm run panel-login, then npm run export-panel-cookie) and restart the app.",
+      );
+    }
     throw new Error(
-      "Panel returned HTML instead of JSON. Check credentials and captcha, then try again.",
+      "Durian panel returned a web page instead of JSON (temporary block or outage). Try again in a few minutes.",
     );
   }
   try {
