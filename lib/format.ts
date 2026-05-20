@@ -3,14 +3,27 @@ export function digitsOnly(value: string): string {
   return value.replace(/\D/g, "");
 }
 
-/** E.164-style value for clipboard (API expects +prefix). */
+/**
+ * National-format phone for clipboard (no country code).
+ * US/CA: (317) 799-3900 — display may still show +1 (317) 799-3900.
+ */
 export function phoneCopyValue(phone: string): string {
-  const d = digitsOnly(phone);
-  if (!d) return phone.trim();
-  if (phone.trim().startsWith("+")) return `+${d}`;
-  if (d.length === 10) return `+1${d}`;
-  if (d.length === 11 && d.startsWith("1")) return `+${d}`;
-  return `+${d}`;
+  const raw = phone.trim();
+  const d = digitsOnly(raw);
+  if (!d) return raw;
+
+  if (d.length === 11 && d.startsWith("1")) {
+    const n = d.slice(1);
+    return `(${n.slice(0, 3)}) ${n.slice(3, 6)}-${n.slice(6)}`;
+  }
+
+  if (d.length === 10) {
+    return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
+  }
+
+  const display = formatPhoneDisplay(raw);
+  const withoutCountry = display.replace(/^\+\d{1,3}\s+/, "");
+  return withoutCountry || display;
 }
 
 /**
