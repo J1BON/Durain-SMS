@@ -11,13 +11,13 @@ export function normalizeCountryCode(code: string): string {
 export function countryDisplayLabel(c: CountryOption): string {
   if (c.label) return c.label;
   if (c.code === "*") return "All countries";
-  if (c.code === US_COUNTRY_CODE) return "United States";
+  if (c.code === US_COUNTRY_CODE) return "USA";
   return c.code.toUpperCase();
 }
 
 /**
  * Single ordered list for the country dropdown (no duplicate optgroups).
- * Order: All countries → US (when in API data) → favorites → rest by stock.
+ * Order: All countries → USA (when in API data) → favorites → rest by stock.
  */
 export function buildCountryList(
   countries: CountryOption[],
@@ -76,7 +76,7 @@ export function isCountryFavoriteCode(
   return favoriteCodes.map(normalizeCountryCode).includes(norm);
 }
 
-/** Prefer US when in stock, then All countries, then first with stock. */
+/** Prefer USA when in stock, then All countries, then first with stock. */
 export function defaultCountryCode(ordered: CountryOption[]): string {
   const us = ordered.find((c) => c.code === US_COUNTRY_CODE && c.stock > 0);
   if (us) return us.code;

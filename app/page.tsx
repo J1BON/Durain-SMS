@@ -408,7 +408,7 @@ export default function HomePage() {
                   (c) => normalizeCountryCode(c.code) === US_COUNTRY_CODE,
                 )
               : undefined;
-          if (prevUs && prevUs.stock > 0) {
+          if (prevUs) {
             list = [...list, prevUs];
           }
         }

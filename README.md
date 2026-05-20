@@ -238,7 +238,7 @@ You should see the **new account’s balance** and full service list.
 
 1. **Sign in** with your site credentials (`SITE_AUTH_*`).
 2. **Search** a service by name (e.g. Microsoft, Rips).
-3. Pick **country** (US is listed first when stock exists).
+3. Pick **country** (**USA** is listed first when that row exists).
 4. Optional: **Secret key**, **Single / Multiple** message mode.
 5. Tap **Get Number** → copy phone / wait for SMS code (copy uses **national** format for US/CA, e.g. `(317) 799-3900`).
 6. **Balance** updates automatically from Durian.
