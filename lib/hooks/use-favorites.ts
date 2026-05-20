@@ -17,6 +17,18 @@ function readJsonArray<T>(key: string): T[] {
   }
 }
 
+function readServiceFavorites(): number[] {
+  const seen = new Set<number>();
+  const out: number[] = [];
+  for (const id of readJsonArray<number>(SERVICE_KEY)) {
+    const pid = Number(id);
+    if (!Number.isInteger(pid) || pid <= 0 || seen.has(pid)) continue;
+    seen.add(pid);
+    out.push(pid);
+  }
+  return out;
+}
+
 function readCountryFavorites(): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -35,7 +47,11 @@ export function useFavorites() {
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
-    setServiceIds(readJsonArray<number>(SERVICE_KEY));
+    const servicePids = readServiceFavorites();
+    setServiceIds(servicePids);
+    if (servicePids.length > 0) {
+      localStorage.setItem(SERVICE_KEY, JSON.stringify(servicePids));
+    }
     const codes = readCountryFavorites();
     setCountryCodes(codes);
     if (codes.length > 0) {

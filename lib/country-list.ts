@@ -2,18 +2,25 @@ export type CountryOption = { code: string; stock: number; label?: string };
 
 export const US_COUNTRY_CODE = "us";
 
-/** Value sent to Durian getMobile `cuy` (panel shows USA, not `us`). */
+/**
+ * Country code for Durian getMobile `cuy` — must match getCountryPhoneNum keys (`us`, not `usa`).
+ * UI label is still "USA" via countryDisplayLabel().
+ */
 export function cuyForDurianApi(code: string): string {
-  const c = normalizeCountryCode(code);
-  if (c === US_COUNTRY_CODE) return "usa";
-  if (c === "*") return "*";
-  return c;
+  return normalizeCountryCode(code);
 }
 
 export function normalizeCountryCode(code: string): string {
-  const trimmed = code.trim();
+  const trimmed = code.trim().toLowerCase();
   if (trimmed === "*") return "*";
-  return trimmed.toLowerCase();
+  if (
+    trimmed === "usa" ||
+    trimmed === "united states" ||
+    trimmed === "united-states"
+  ) {
+    return US_COUNTRY_CODE;
+  }
+  return trimmed;
 }
 
 export function countryDisplayLabel(c: CountryOption): string {
@@ -84,11 +91,11 @@ export function isCountryFavoriteCode(
   return favoriteCodes.map(normalizeCountryCode).includes(norm);
 }
 
-/** Prefer USA when in stock, then All countries, then first with stock. */
+/** Prefer USA when in stock, then All countries (if it has stock), then first with stock. */
 export function defaultCountryCode(ordered: CountryOption[]): string {
   const us = ordered.find((c) => c.code === US_COUNTRY_CODE && c.stock > 0);
   if (us) return us.code;
-  const all = ordered.find((c) => c.code === "*");
+  const all = ordered.find((c) => c.code === "*" && c.stock > 0);
   if (all) return all.code;
   const withStock = ordered.find((c) => c.stock > 0);
   return withStock?.code ?? ordered[0]?.code ?? "";

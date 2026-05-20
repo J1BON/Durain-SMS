@@ -117,13 +117,15 @@ export default function HomePage() {
     rows: Country[];
   } | null>(null);
   const favoriteCountryCodesRef = useRef(favoriteCountryCodes);
+  const favoriteServiceIdsRef = useRef(favoriteServiceIds);
   const favoritesReadyRef = useRef(favoritesReady);
   const [countrySelectKey, setCountrySelectKey] = useState(0);
 
   useEffect(() => {
     favoriteCountryCodesRef.current = favoriteCountryCodes;
+    favoriteServiceIdsRef.current = favoriteServiceIds;
     favoritesReadyRef.current = favoritesReady;
-  }, [favoriteCountryCodes, favoritesReady]);
+  }, [favoriteCountryCodes, favoriteServiceIds, favoritesReady]);
   const secondsLeft = useCountdown(numberExpiresAt);
 
   const showToast = useCallback((message: string) => {
@@ -186,7 +188,11 @@ export default function HomePage() {
         if (list.length > 0) {
           setSelectedService((prev) => {
             if (prev && list.some((s) => s.pid === prev.pid)) return prev;
-            return prev;
+            const favIds = favoritesReadyRef.current
+              ? favoriteServiceIdsRef.current
+              : [];
+            const fav = list.find((s) => favIds.includes(s.pid));
+            return fav ?? list[0] ?? null;
           });
         }
 
@@ -433,7 +439,10 @@ export default function HomePage() {
           );
         }
       } finally {
-        if (!options?.quiet) {
+        if (
+          !options?.quiet &&
+          fetchGen === countryFetchGen.current
+        ) {
           setLoadingCountries(false);
         }
       }
@@ -581,7 +590,33 @@ export default function HomePage() {
 
     setLoadingNumber(true);
     setError(null);
-    resetOrder();
+
+    if (phoneNumber && selectedService) {
+      try {
+        const releaseRes = await fetchWithRetry("/api/release", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            pn: phoneNumber,
+            pid: selectedService.pid,
+            serial: orderSerial,
+          }),
+        });
+        if (releaseRes.ok) {
+          if (pollRef.current) {
+            clearInterval(pollRef.current);
+            pollRef.current = null;
+          }
+          setPhoneNumber(null);
+          setSmsCode(null);
+          setWaitingSms(false);
+          setNumberExpiresAt(null);
+        }
+      } catch {
+        // continue — user may be replacing an expired order
+      }
+    }
+
     const serial = selectedService.serial ?? serialMode;
     setOrderSerial(serial === 1 ? 1 : 2);
 
@@ -618,8 +653,15 @@ export default function HomePage() {
         throw new Error("Invalid response: missing phone number");
       }
 
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+      setSmsCode(null);
+      setWaitingSms(false);
       setPhoneNumber(apiPn);
       setNumberExpiresAt(Date.now() + NUMBER_TTL_MS);
+      void loadBalance();
     } catch (e) {
       setError(
         isBrowserNetworkError(e)
@@ -633,12 +675,16 @@ export default function HomePage() {
     }
   };
 
-  const handleRelease = async () => {
-    if (!phoneNumber || !selectedService) return;
+  const handleStartOver = async () => {
+    if (!phoneNumber || !selectedService) {
+      resetOrder();
+      setError(null);
+      return;
+    }
     setActionLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/release", {
+      const res = await fetchWithRetry("/api/release", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -651,6 +697,33 @@ export default function HomePage() {
       if (!res.ok) throw new Error(body.error ?? "Release failed");
       showToast("Number released");
       resetOrder();
+      void loadBalance();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Release failed");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleRelease = async () => {
+    if (!phoneNumber || !selectedService) return;
+    setActionLoading(true);
+    setError(null);
+    try {
+      const res = await fetchWithRetry("/api/release", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pn: phoneNumber,
+          pid: selectedService.pid,
+          serial: orderSerial,
+        }),
+      });
+      const body = (await readApiJson(res)) as { error?: string };
+      if (!res.ok) throw new Error(body.error ?? "Release failed");
+      showToast("Number released");
+      resetOrder();
+      void loadBalance();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Release failed");
     } finally {
@@ -663,7 +736,7 @@ export default function HomePage() {
     setActionLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/blacklist", {
+      const res = await fetchWithRetry("/api/blacklist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -675,6 +748,7 @@ export default function HomePage() {
       if (!res.ok) throw new Error(body.error ?? "Blacklist failed");
       showToast("Number blacklisted");
       resetOrder();
+      void loadBalance();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Blacklist failed");
     } finally {
@@ -709,11 +783,19 @@ export default function HomePage() {
     ? selectedCountry
     : "";
 
+  const selectedCountryRow = countryOptions.find(
+    (c) => c.code === activeCountryCode,
+  );
+  const countryHasStock =
+    activeCountryCode === "*" ||
+    (selectedCountryRow?.stock ?? 0) > 0;
+
   const canSubmitOrder =
     !orderLocked &&
     !loadingServices &&
     Boolean(selectedService) &&
     Boolean(activeCountryCode) &&
+    countryHasStock &&
     countryOptions.length > 0 &&
     !(loadingCountries && countryOptions.length === 0);
 
@@ -835,12 +917,19 @@ export default function HomePage() {
                 <ul className="mb-2 max-h-40 overflow-y-auto rounded-xl border border-warning/30 bg-warning/5">
                   {favoriteServices.map((s) => (
                     <li key={s.pid}>
-                      <button
-                        type="button"
-                        className={`flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-base-200 ${
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        className={`flex w-full cursor-pointer items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-base-200 ${
                           selectedService?.pid === s.pid ? "bg-primary/10" : ""
                         }`}
                         onClick={() => setSelectedService(s)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            setSelectedService(s);
+                          }
+                        }}
                       >
                         <FavoriteButton
                           active
@@ -851,7 +940,7 @@ export default function HomePage() {
                         <span className="shrink-0 text-xs text-base-content/50">
                           ID {s.pid}
                         </span>
-                      </button>
+                      </div>
                     </li>
                   ))}
                 </ul>
@@ -1197,10 +1286,8 @@ export default function HomePage() {
             <button
               type="button"
               className="btn btn-ghost btn-sm rounded-lg text-base-content/60"
-              onClick={() => {
-                resetOrder();
-                setError(null);
-              }}
+              disabled={actionLoading}
+              onClick={() => void handleStartOver()}
             >
               Start over
             </button>

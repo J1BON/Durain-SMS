@@ -2,16 +2,22 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Loader2, Lock, MessageSquare, User } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { readApiJson } from "@/lib/client-fetch-json";
+import { fetchWithRetry } from "@/lib/client-fetch-retry";
 
 function getRedirectPath(): string {
   if (typeof window === "undefined") return "/";
   const from = new URLSearchParams(window.location.search).get("from");
-  if (from && from.startsWith("/") && !from.startsWith("//")) {
-    return from;
+  if (!from || !from.startsWith("/") || from.startsWith("//")) {
+    return "/";
   }
-  return "/";
+  if (from.startsWith("/api/") || from === "/login") {
+    return "/";
+  }
+  return from;
 }
 
 export default function LoginPage() {
@@ -27,12 +33,15 @@ export default function LoginPage() {
     setError(null);
 
     try {
-      const res = await fetch("/api/auth/login", {
+      const res = await fetchWithRetry("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({
+          username: username.trim(),
+          password,
+        }),
       });
-      const body = await res.json();
+      const body = (await readApiJson(res)) as { error?: string };
 
       if (!res.ok) {
         throw new Error(body.error ?? "Login failed");
@@ -122,6 +131,12 @@ export default function LoginPage() {
           </p>
         </form>
       </section>
+
+      <p className="mt-6 text-center text-sm">
+        <Link href="/panel-refresh" className="link link-hover text-base-content/50">
+          Renew Durian panel session
+        </Link>
+      </p>
     </div>
   );
 }

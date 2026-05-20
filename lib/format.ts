@@ -7,12 +7,20 @@ export function digitsOnly(value: string): string {
  * Canonical E.164-ish value for Durian ext_api query params (`pn`, etc.).
  * Accepts numbers the UI may show with spaces or parentheses.
  */
-export function phoneForDurianExtApi(pn: string): string {
+export function phoneForDurianExtApi(
+  pn: string,
+  countryCode?: string,
+): string {
   const raw = pn.trim();
   const d = digitsOnly(raw);
   if (!d) return raw;
+  const isUs =
+    countryCode?.toLowerCase() === "us" ||
+    countryCode?.toLowerCase() === "usa";
   if (raw.startsWith("+")) return `+${d}`;
-  if (d.length === 10) return `+1${d}`;
+  if (d.length === 10 && isUs) return `+1${d}`;
+  if (d.length === 11 && d.startsWith("1") && isUs) return `+${d}`;
+  if (d.length === 10) return d;
   if (d.length === 11 && d.startsWith("1")) return `+${d}`;
   return `+${d}`;
 }

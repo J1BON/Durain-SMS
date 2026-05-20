@@ -26,7 +26,7 @@ export function getCredentials(): { username: string; apiKey: string } {
     throw new DurianApiError(
       803,
       "Server credentials are not configured",
-      500,
+      401,
     );
   }
 
@@ -113,16 +113,36 @@ export function humanizeApiError(code: number, msg: string): string {
   return messages[code] ?? msg ?? "Request failed";
 }
 
+const DURIAN_FETCH_TIMEOUT_MS = 25_000;
+
 export async function fetchDurian<T>(
   endpoint: string,
   params: Record<string, string | number | undefined>,
 ): Promise<{ data: T; raw: DurianResponse<T> }> {
   const url = buildDurianUrl(endpoint, params);
-  const res = await fetch(url, {
-    method: "GET",
-    headers: { Accept: "application/json" },
-    cache: "no-store",
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), DURIAN_FETCH_TIMEOUT_MS);
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new DurianApiError(
+        504,
+        "Durian API request timed out. Try again.",
+        504,
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   if (!res.ok) {
     throw new DurianApiError(

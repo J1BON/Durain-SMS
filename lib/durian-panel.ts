@@ -515,6 +515,19 @@ export async function fetchPanelNameMap(
   return map;
 }
 
+/** Fetch a new captcha image into an existing panel session (same PHP session as prior image). */
+export async function refreshCaptchaInJar(jar: PanelCookies): Promise<ArrayBuffer> {
+  const res = await fetch(`${PANEL_BASE}/valdatioCode`, {
+    headers: { Cookie: cookieHeaderFromMap(jar) },
+    cache: "no-store",
+  });
+  mergeSetCookie(jar, getSetCookies(res.headers));
+  if (!res.ok) {
+    throw new Error(`Failed to load captcha (${res.status})`);
+  }
+  return res.arrayBuffer();
+}
+
 /** Open the panel login page so PHP session cookies are issued before captcha/login. */
 export async function beginPanelSession(jar: PanelCookies): Promise<void> {
   const res = await fetch(PANEL_LOGIN_PAGE, { cache: "no-store" });

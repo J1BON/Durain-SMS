@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { phoneForDurianExtApi } from "@/lib/format";
-import { DurianApiError, fetchDurian } from "@/lib/durian-api";
+import { DurianApiError } from "@/lib/durian-api";
+import { fetchDurianWithPnVariants } from "@/lib/durian-pn-action";
 
 export async function POST(request: NextRequest) {
   let body: { pn?: string; pid?: number } = {};
@@ -20,10 +20,8 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const pn = phoneForDurianExtApi(pnRaw);
-
   try {
-    await fetchDurian("addBlack", { pn, pid });
+    await fetchDurianWithPnVariants("addBlack", pnRaw, { pid });
     return NextResponse.json({ ok: true });
   } catch (err) {
     if (err instanceof DurianApiError) {

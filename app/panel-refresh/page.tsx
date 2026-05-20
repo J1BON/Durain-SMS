@@ -1,27 +1,88 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { KeyRound, Loader2, RefreshCw } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { readApiJson } from "@/lib/client-fetch-json";
 
 export default function PanelRefreshPage() {
-  const [captchaKey, setCaptchaKey] = useState(() => String(Date.now()));
+  const [captchaUrl, setCaptchaUrl] = useState<string | null>(null);
+  const [captchaLoading, setCaptchaLoading] = useState(true);
+  const [captchaReady, setCaptchaReady] = useState(false);
   const [captcha, setCaptcha] = useState("");
   const [panelPassword, setPanelPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState<string | null>(null);
 
-  const newCaptcha = useCallback(() => {
-    setCaptchaKey(String(Date.now()));
-    setCaptcha("");
-    setError(null);
+  const captchaUrlRef = useRef<string | null>(null);
+  const loadGenRef = useRef(0);
+
+  const revokeCaptchaUrl = useCallback(() => {
+    if (captchaUrlRef.current) {
+      URL.revokeObjectURL(captchaUrlRef.current);
+      captchaUrlRef.current = null;
+    }
   }, []);
+
+  const loadCaptcha = useCallback(
+    async (options?: { reuse?: boolean }) => {
+      const gen = ++loadGenRef.current;
+      setCaptchaLoading(true);
+      setCaptchaReady(false);
+      setError(null);
+
+      try {
+        const q = options?.reuse ? "?reuse=1" : `?t=${Date.now()}`;
+        const res = await fetch(`/api/panel/captcha${q}`, {
+          credentials: "include",
+          cache: "no-store",
+        });
+
+        if (!res.ok) {
+          const body = (await readApiJson(res)) as { error?: string };
+          throw new Error(body.error ?? "Failed to load captcha image");
+        }
+
+        if (gen !== loadGenRef.current) return;
+
+        revokeCaptchaUrl();
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        captchaUrlRef.current = url;
+        setCaptchaUrl(url);
+        setCaptchaReady(true);
+      } catch (err) {
+        if (gen !== loadGenRef.current) return;
+        setError(
+          err instanceof Error ? err.message : "Failed to load captcha",
+        );
+        setCaptchaReady(false);
+      } finally {
+        if (gen === loadGenRef.current) {
+          setCaptchaLoading(false);
+        }
+      }
+    },
+    [revokeCaptchaUrl],
+  );
+
+  useEffect(() => {
+    void loadCaptcha();
+    return () => {
+      loadGenRef.current += 1;
+      revokeCaptchaUrl();
+    };
+  }, [loadCaptcha, revokeCaptchaUrl]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!captchaReady) {
+      setError("Wait for the captcha image to finish loading, then try again.");
+      return;
+    }
+
     setLoading(true);
     setError(null);
     setSuccess(null);
@@ -29,6 +90,7 @@ export default function PanelRefreshPage() {
     try {
       const res = await fetch("/api/panel/login", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           captcha: captcha.trim(),
@@ -42,23 +104,27 @@ export default function PanelRefreshPage() {
         ok?: boolean;
         count?: number;
         message?: string;
+        refreshCaptcha?: boolean;
       };
 
       if (!res.ok) {
+        if (body.refreshCaptcha) {
+          setCaptcha("");
+          await loadCaptcha({ reuse: true });
+        }
         throw new Error(body.error ?? "Panel login failed");
       }
 
       setSuccess(
-        body.count != null
-          ? `Linked — ${body.count} services available. You can go back and tap Sync if needed.`
-          : (body.message ?? "Panel linked."),
+        body.message ??
+          (body.count != null
+            ? `Linked — ${body.count} services on file; catalog may still be syncing.`
+            : "Panel linked."),
       );
       setCaptcha("");
-      newCaptcha();
+      await loadCaptcha();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Panel login failed");
-      setCaptchaKey(String(Date.now()));
-      setCaptcha("");
     } finally {
       setLoading(false);
     }
@@ -88,25 +154,34 @@ export default function PanelRefreshPage() {
               <button
                 type="button"
                 className="btn btn-ghost btn-xs gap-1 rounded-lg"
-                onClick={() => newCaptcha()}
+                disabled={captchaLoading}
+                onClick={() => {
+                  setCaptcha("");
+                  void loadCaptcha();
+                }}
               >
                 <RefreshCw className="h-3.5 w-3.5" />
                 New image
               </button>
             </div>
-            <div className="overflow-hidden rounded-xl border border-base-300 bg-base-200/50 p-2">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                key={captchaKey}
-                src={`/api/panel/captcha?k=${encodeURIComponent(captchaKey)}`}
-                alt="Captcha"
-                className="mx-auto max-h-24 w-auto object-contain"
-              />
+            <div className="flex min-h-[6.5rem] items-center justify-center overflow-hidden rounded-xl border border-base-300 bg-base-200/50 p-2">
+              {captchaLoading && (
+                <Loader2 className="h-8 w-8 animate-spin text-base-content/40" />
+              )}
+              {!captchaLoading && captchaUrl && (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img
+                  src={captchaUrl}
+                  alt="Captcha"
+                  className="mx-auto max-h-24 w-auto object-contain"
+                />
+              )}
             </div>
             <label className="label py-1" htmlFor="captcha">
               <span className="label-text-alt text-base-content/50">
-                Load the image before typing — it sets a short-lived session on
-                this browser.
+                {captchaReady
+                  ? "Enter the digits shown above, then tap Link."
+                  : "Loading captcha — please wait before typing."}
               </span>
             </label>
             <input
@@ -118,6 +193,7 @@ export default function PanelRefreshPage() {
               placeholder="Digits from the image"
               value={captcha}
               onChange={(e) => setCaptcha(e.target.value)}
+              disabled={!captchaReady || loading}
               required
             />
           </div>
@@ -139,6 +215,7 @@ export default function PanelRefreshPage() {
               placeholder="Only if DURIAN_WEB_PASSWORD is not set on the server"
               value={panelPassword}
               onChange={(e) => setPanelPassword(e.target.value)}
+              disabled={loading}
             />
           </div>
 
@@ -157,7 +234,7 @@ export default function PanelRefreshPage() {
           <button
             type="submit"
             className="btn btn-primary h-11 w-full rounded-xl font-medium"
-            disabled={loading}
+            disabled={loading || !captchaReady}
           >
             {loading ? (
               <>

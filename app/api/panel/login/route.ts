@@ -10,14 +10,22 @@ import {
 } from "@/lib/panel-challenge-cookie";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
-function jsonWithClearedChallenge(
+function panelLoginJson(
   body: Record<string, unknown>,
   status: number,
+  options?: { clearChallenge?: boolean },
 ): NextResponse {
   const res = NextResponse.json(body, { status });
-  res.cookies.delete(PANEL_CHALLENGE_COOKIE);
+  if (options?.clearChallenge) {
+    res.cookies.delete(PANEL_CHALLENGE_COOKIE);
+  }
   return res;
+}
+
+function isInvalidCaptchaError(message: string): boolean {
+  return /invalid captcha/i.test(message);
 }
 
 export async function POST(request: NextRequest) {
@@ -58,10 +66,10 @@ export async function POST(request: NextRequest) {
   const jarFromBrowser = unsealPanelChallengeJar(challenge);
 
   if (!jarFromBrowser) {
-    return jsonWithClearedChallenge(
+    return panelLoginJson(
       {
         error:
-          "Captcha session missing or expired. Open Panel login, load a fresh image, then try again.",
+          "Captcha session missing or expired. Wait for the image to finish loading, then try again.",
       },
       400,
     );
@@ -75,23 +83,35 @@ export async function POST(request: NextRequest) {
       captcha,
     });
 
-    const result = await getServices({ forceRefresh: true });
+    const cached = await getServices({ forceRefresh: false });
+    void getServices({ forceRefresh: true }).catch((syncErr) => {
+      console.error("[api/panel/login] background catalog sync:", syncErr);
+    });
 
-    return jsonWithClearedChallenge(
+    return panelLoginJson(
       {
         ok: true,
-        message: "Panel linked successfully",
-        count: result.services.length,
+        message:
+          cached.services.length > 0
+            ? "Panel linked. Service catalog is syncing in the background."
+            : "Panel linked. Tap Sync services on the home page (may take 1–2 minutes).",
+        count: cached.services.length,
+        syncing: true,
       },
       200,
+      { clearChallenge: true },
     );
   } catch (err) {
     console.error("[api/panel/login]", err);
-    return jsonWithClearedChallenge(
+    const message = err instanceof Error ? err.message : "Panel login failed";
+    const invalidCaptcha = isInvalidCaptchaError(message);
+    return panelLoginJson(
       {
-        error: err instanceof Error ? err.message : "Panel login failed",
+        error: message,
+        refreshCaptcha: invalidCaptcha,
       },
       400,
+      { clearChallenge: !invalidCaptcha },
     );
   }
 }
