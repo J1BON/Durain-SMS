@@ -83,6 +83,8 @@ export default function HomePage() {
   const [copiedField, setCopiedField] = useState<"phone" | "code" | null>(null);
   const [showFavoriteServices, setShowFavoriteServices] = useState(false);
   const [servicePickerOpen, setServicePickerOpen] = useState(false);
+  const [syncingServices, setSyncingServices] = useState(false);
+  const [servicesHint, setServicesHint] = useState<string | null>(null);
 
   const {
     hydrated: favoritesReady,
@@ -138,10 +140,9 @@ export default function HomePage() {
   }, [serviceSearch]);
 
   const loadServices = useCallback(
-    async (options?: { refresh?: boolean; quiet?: boolean }) => {
+    async (options?: { refresh?: boolean; quiet?: boolean }): Promise<number> => {
       if (!options?.quiet) {
         setLoadingServices(true);
-        setError(null);
       }
 
       try {
@@ -156,19 +157,29 @@ export default function HomePage() {
         }
 
         const list: Service[] = body.services ?? [];
+        setServices(list);
+        setServicesHint(
+          list.length === 0 && typeof body.setupHint === "string"
+            ? body.setupHint
+            : null,
+        );
+
         if (list.length > 0) {
-          setServices(list);
           setSelectedService((prev) => {
             if (prev && list.some((s) => s.pid === prev.pid)) return prev;
             return prev;
           });
         }
+
+        return list.length;
       } catch (e) {
         if (!options?.quiet) {
+          setServicesHint(null);
           setError(e instanceof Error ? e.message : "Failed to load services");
           setServices([]);
           setSelectedService(null);
         }
+        return 0;
       } finally {
         if (!options?.quiet) {
           setLoadingServices(false);
@@ -178,15 +189,32 @@ export default function HomePage() {
     [],
   );
 
+  const syncServicesFromDurian = useCallback(async () => {
+    setSyncingServices(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/services/sync", { method: "POST" });
+      const body = await res.json();
+      if (!res.ok) {
+        throw new Error(body.error ?? "Failed to sync services from Durian");
+      }
+      showToast(`Synced ${body.count ?? 0} services`);
+      await loadServices({ refresh: true });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Service sync failed");
+    } finally {
+      setSyncingServices(false);
+    }
+  }, [loadServices, showToast]);
+
   useEffect(() => {
     let cancelled = false;
 
-    void loadServices();
-
     void (async () => {
-      await loadServices({ refresh: true, quiet: true });
-      await new Promise((r) => setTimeout(r, 12_000));
-      if (!cancelled) await loadServices({ quiet: true });
+      const count = await loadServices();
+      if (cancelled || count > 0) return;
+      await syncServicesFromDurian();
+      if (!cancelled) await loadServices({ refresh: true });
     })();
 
     const id = setInterval(
@@ -198,7 +226,7 @@ export default function HomePage() {
       cancelled = true;
       clearInterval(id);
     };
-  }, [loadServices]);
+  }, [loadServices, syncServicesFromDurian]);
 
   const loadBalance = useCallback(async () => {
     try {
@@ -730,7 +758,7 @@ export default function HomePage() {
                   ))}
                 </ul>
               )}
-            {showServicePicker && !loadingServices && (
+            {showServicePicker && !loadingServices && !syncingServices && (
               <ul
                 className="mb-2 max-h-52 overflow-y-auto rounded-xl border border-base-300 bg-base-100 shadow-sm"
                 role="listbox"
@@ -741,7 +769,27 @@ export default function HomePage() {
                     Popular services — type to search all {services.length}
                   </li>
                 )}
-                {searchQuery && filteredServices.length === 0 ? (
+                {services.length === 0 ? (
+                  <li className="space-y-2 px-3 py-3 text-sm text-base-content/60">
+                    <p>Service list not loaded yet.</p>
+                    {servicesHint && <p className="text-xs">{servicesHint}</p>}
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm rounded-lg"
+                      disabled={syncingServices}
+                      onClick={() => void syncServicesFromDurian()}
+                    >
+                      {syncingServices ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Syncing…
+                        </>
+                      ) : (
+                        "Sync services from Durian"
+                      )}
+                    </button>
+                  </li>
+                ) : searchQuery && filteredServices.length === 0 ? (
                   <li className="px-3 py-3 text-sm text-base-content/50">
                     No services match &ldquo;{serviceSearch.trim()}&rdquo;
                   </li>
@@ -788,6 +836,28 @@ export default function HomePage() {
                   </li>
                 )}
               </ul>
+            )}
+            {!loadingServices && services.length === 0 && servicesHint && (
+              <div className="alert alert-warning mt-2 rounded-xl py-3 text-sm shadow-none">
+                <span>{servicesHint}</span>
+              </div>
+            )}
+            {!loadingServices && services.length === 0 && (
+              <button
+                type="button"
+                className="btn btn-outline btn-sm mt-2 w-full rounded-xl"
+                disabled={syncingServices}
+                onClick={() => void syncServicesFromDurian()}
+              >
+                {syncingServices ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Syncing from Durian…
+                  </>
+                ) : (
+                  "Sync services from Durian"
+                )}
+              </button>
             )}
             {!loadingServices && services.length > 0 && (
               <div className="relative mt-1">

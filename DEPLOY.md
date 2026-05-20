@@ -123,6 +123,7 @@ If you still use Vercel:
 
 | Problem | Fix |
 |---------|-----|
+| **No services / search empty** | Set `DURIAN_SESSION_COOKIE` on Render, redeploy, tap **Sync services from Durian** |
 | Only ~1,700 generic “Project N” names | Set `DURIAN_SESSION_COOKIE`; run `npm run export-panel-cookie` again |
 | “Panel session expired” in logs | `npm run panel-login` locally → update `DURIAN_SESSION_COOKIE` on host |
 | Countries empty for a service | Check `DURIAN_API_KEY` and balance on Durian |

@@ -3,6 +3,7 @@ import { getServices } from "@/lib/discover-services";
 import { DurianApiError } from "@/lib/durian-api";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 export async function GET(request: NextRequest) {
   const forceRefresh =
@@ -10,7 +11,7 @@ export async function GET(request: NextRequest) {
     request.nextUrl.searchParams.get("refresh") === "true";
 
   try {
-    const { services, cached, updatedAt, source, refreshing } =
+    const { services, cached, updatedAt, source, refreshing, setupHint } =
       await getServices({
         forceRefresh,
       });
@@ -22,6 +23,7 @@ export async function GET(request: NextRequest) {
       updatedAt,
       source,
       refreshing: refreshing ?? false,
+      setupHint: services.length === 0 ? setupHint : undefined,
     });
   } catch (err) {
     if (err instanceof DurianApiError) {

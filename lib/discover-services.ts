@@ -1,6 +1,7 @@
 import { promises as fs } from "fs";
 import path from "path";
 import { fetchAllPanelProjects } from "./durian-panel";
+import { getPanelSetupHint, hasPanelSession } from "./panel-session";
 import type { Service } from "./types";
 
 export type { Service } from "./types";
@@ -27,7 +28,7 @@ async function readCache(): Promise<ServiceCache | null> {
   }
 }
 
-async function writeCache(services: Service[]): Promise<void> {
+export async function writeCache(services: Service[]): Promise<void> {
   await fs.mkdir(path.dirname(CACHE_PATH), { recursive: true });
   const payload: ServiceCache = {
     updatedAt: new Date().toISOString(),
@@ -76,6 +77,7 @@ export async function getServices(options?: {
   updatedAt?: string;
   source: "panel" | "cache";
   refreshing?: boolean;
+  setupHint?: string;
 }> {
   const forceRefresh = options?.forceRefresh ?? false;
   const cache = await readCache();
@@ -144,5 +146,11 @@ export async function getServices(options?: {
     };
   }
 
-  return { services: [], cached: false, source: "cache" };
+  const hasSession = await hasPanelSession();
+  return {
+    services: [],
+    cached: false,
+    source: "cache",
+    setupHint: getPanelSetupHint(hasSession),
+  };
 }
