@@ -313,7 +313,7 @@ async function fetchProjectListPage(
     throw new Error(`Panel project list failed (${res.status})`);
   }
 
-  const json = (await res.json()) as PanelProjectListResponse;
+  const json = await parsePanelJsonResponse<PanelProjectListResponse>(res);
   return {
     rows: json.data ?? [],
     total: json.recordsFiltered ?? json.recordsTotal ?? 0,

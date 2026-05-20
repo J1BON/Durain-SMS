@@ -132,7 +132,28 @@ export async function fetchDurian<T>(
     );
   }
 
-  const raw = (await res.json()) as DurianResponse<T>;
+  const text = await res.text();
+  const trimmed = text.trim();
+  if (!trimmed) {
+    throw new DurianApiError(
+      502,
+      "Durian API returned an empty response.",
+      502,
+    );
+  }
+  let raw: DurianResponse<T>;
+  try {
+    raw = JSON.parse(trimmed) as DurianResponse<T>;
+  } catch {
+    const looksHtml = trimmed.startsWith("<") || trimmed.startsWith("<!");
+    throw new DurianApiError(
+      502,
+      looksHtml
+        ? "Durian API returned a web page instead of JSON (maintenance, block, or bad gateway). Try again shortly."
+        : "Durian API returned invalid JSON. Try again or check your network.",
+      502,
+    );
+  }
 
   if (raw.code !== 200) {
     throw new DurianApiError(

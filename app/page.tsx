@@ -29,6 +29,7 @@ import {
   phoneCopyValue,
   smsCodeCopyValue,
 } from "@/lib/format";
+import { readApiJson } from "@/lib/client-fetch-json";
 import { useCountdown } from "@/lib/use-countdown";
 import {
   buildCountryList,
@@ -150,7 +151,11 @@ export default function HomePage() {
           ? "/api/services?refresh=1"
           : "/api/services";
         const res = await fetch(url, { cache: "no-store" });
-        const body = await res.json();
+        const body = (await readApiJson(res)) as {
+          error?: string;
+          services?: Service[];
+          setupHint?: string;
+        };
 
         if (!res.ok) {
           throw new Error(body.error ?? "Failed to load services");
@@ -194,7 +199,10 @@ export default function HomePage() {
     setError(null);
     try {
       const res = await fetch("/api/services/sync", { method: "POST" });
-      const body = await res.json();
+      const body = (await readApiJson(res)) as {
+        error?: string;
+        count?: number;
+      };
       if (!res.ok) {
         throw new Error(body.error ?? "Failed to sync services from Durian");
       }
@@ -234,7 +242,7 @@ export default function HomePage() {
   const loadBalance = useCallback(async () => {
     try {
       const res = await fetch("/api/account");
-      const body = await res.json();
+      const body = (await readApiJson(res)) as { balance?: number };
       if (res.ok && typeof body.balance === "number") {
         setBalance(body.balance);
       }
@@ -353,7 +361,10 @@ export default function HomePage() {
           `/api/countries?pid=${pid}&_=${Date.now()}`,
           { cache: "no-store" },
         );
-        const body = await res.json();
+        const body = (await readApiJson(res)) as {
+          error?: string;
+          countries?: Country[];
+        };
 
         if (fetchGen !== countryFetchGen.current) return;
         if (countriesPidRef.current !== pid) return;
@@ -438,7 +449,11 @@ export default function HomePage() {
         serial: String(orderSerial),
       });
       const res = await fetch(`/api/checkSms?${params}`);
-      const body = await res.json();
+      const body = (await readApiJson(res)) as {
+        error?: string;
+        pending?: boolean;
+        code?: string;
+      };
 
       if (res.status === 202 || body.pending) {
         setWaitingSms(true);
@@ -523,10 +538,17 @@ export default function HomePage() {
       }
 
       const res = await fetch(`/api/getNumber?${params}`);
-      const body = await res.json();
+      const body = (await readApiJson(res)) as {
+        error?: string;
+        phoneNumber?: string;
+      };
 
       if (!res.ok) {
         throw new Error(body.error ?? "Failed to get number");
+      }
+
+      if (typeof body.phoneNumber !== "string" || !body.phoneNumber) {
+        throw new Error("Invalid response: missing phone number");
       }
 
       setPhoneNumber(body.phoneNumber);
@@ -552,7 +574,7 @@ export default function HomePage() {
           serial: orderSerial,
         }),
       });
-      const body = await res.json();
+      const body = (await readApiJson(res)) as { error?: string };
       if (!res.ok) throw new Error(body.error ?? "Release failed");
       showToast("Number released");
       resetOrder();
@@ -576,7 +598,7 @@ export default function HomePage() {
           pid: selectedService.pid,
         }),
       });
-      const body = await res.json();
+      const body = (await readApiJson(res)) as { error?: string };
       if (!res.ok) throw new Error(body.error ?? "Blacklist failed");
       showToast("Number blacklisted");
       resetOrder();
