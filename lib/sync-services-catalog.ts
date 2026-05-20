@@ -19,10 +19,14 @@ export async function syncServicesCatalogFromPanel(): Promise<{
     await writeCache(services);
     return { ok: true, count: services.length };
   } catch (err) {
+    const message = err instanceof Error ? err.message : "Panel sync failed";
+    const hint = /503|502|429/.test(message)
+      ? " Durian panel was busy — wait 1 minute and tap Sync again."
+      : "";
     return {
       ok: false,
       count: 0,
-      error: err instanceof Error ? err.message : "Panel sync failed",
+      error: message + hint,
     };
   }
 }

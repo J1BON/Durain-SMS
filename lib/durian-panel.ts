@@ -21,9 +21,30 @@ const PANEL_PROJECTS_CACHE_MS = 6 * 60 * 60 * 1000;
 /** Panel DataTables endpoint returns 10 rows per request unless full column schema is sent. */
 const PROJECT_LIST_PAGE_SIZE = 10;
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function getPanelFetchConcurrency(): number {
-  const n = Number(process.env.DURIAN_PANEL_FETCH_CONCURRENCY ?? 20);
-  return Number.isFinite(n) && n > 0 ? Math.min(n, 40) : 20;
+  const n = Number(process.env.DURIAN_PANEL_FETCH_CONCURRENCY ?? 3);
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 10) : 3;
+}
+
+function getPanelFetchDelayMs(): number {
+  const n = Number(process.env.DURIAN_PANEL_FETCH_DELAY_MS ?? 120);
+  return Number.isFinite(n) && n >= 0 ? n : 120;
+}
+
+/** Sequential fetch avoids 503 rate limits from the Durian panel on cloud hosts. */
+function shouldUseSequentialPanelFetch(): boolean {
+  const mode = process.env.DURIAN_PANEL_FETCH_MODE?.trim().toLowerCase();
+  if (mode === "parallel") return false;
+  if (mode === "sequential") return true;
+  return process.env.NODE_ENV === "production";
+}
+
+function isRetryablePanelStatus(status: number): boolean {
+  return status === 429 || status === 502 || status === 503 || status === 504;
 }
 
 type PanelProjectRow = {
@@ -299,6 +320,48 @@ async function fetchProjectListPage(
   };
 }
 
+async function fetchProjectListPageWithRetry(
+  headers: Record<string, string>,
+  start: number,
+): Promise<{ rows: PanelProjectRow[]; total: number }> {
+  const maxAttempts = 5;
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      return await fetchProjectListPage(headers, start);
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      const retryable = /\(429\)|\(502\)|\(503\)|\(504\)/.test(lastError.message);
+      if (!retryable || attempt === maxAttempts - 1) break;
+      await sleep(600 * (attempt + 1));
+    }
+  }
+
+  throw lastError ?? new Error("Panel project list failed");
+}
+
+async function fetchAllPanelProjectsSequential(
+  headers: Record<string, string>,
+  byPid: Map<number, Service>,
+): Promise<number> {
+  const delayMs = getPanelFetchDelayMs();
+  let start = 0;
+  let total = Number.POSITIVE_INFINITY;
+
+  while (start < total) {
+    const page = await fetchProjectListPageWithRetry(headers, start);
+    total = page.total;
+    mergeProjectRows(byPid, page.rows);
+    start += PROJECT_LIST_PAGE_SIZE;
+    if (start < total && delayMs > 0) {
+      await sleep(delayMs);
+    }
+  }
+
+  return total;
+}
+
 function mergeProjectRows(
   byPid: Map<number, Service>,
   rows: PanelProjectRow[],
@@ -326,28 +389,37 @@ export async function fetchAllPanelProjects(options?: {
 
   const headers = panelAjaxHeaders(cookieHeader);
   const byPid = new Map<number, Service>();
-  const concurrency = getPanelFetchConcurrency();
 
-  const first = await fetchProjectListPage(headers, 0);
-  const total = first.total;
-  mergeProjectRows(byPid, first.rows);
+  if (shouldUseSequentialPanelFetch()) {
+    await fetchAllPanelProjectsSequential(headers, byPid);
+  } else {
+    const concurrency = getPanelFetchConcurrency();
+    const delayMs = getPanelFetchDelayMs();
 
-  const pageStarts: number[] = [];
-  for (
-    let start = PROJECT_LIST_PAGE_SIZE;
-    start < total;
-    start += PROJECT_LIST_PAGE_SIZE
-  ) {
-    pageStarts.push(start);
-  }
+    const first = await fetchProjectListPageWithRetry(headers, 0);
+    const total = first.total;
+    mergeProjectRows(byPid, first.rows);
 
-  for (let i = 0; i < pageStarts.length; i += concurrency) {
-    const batch = pageStarts.slice(i, i + concurrency);
-    const pages = await Promise.all(
-      batch.map((start) => fetchProjectListPage(headers, start)),
-    );
-    for (const page of pages) {
-      mergeProjectRows(byPid, page.rows);
+    const pageStarts: number[] = [];
+    for (
+      let start = PROJECT_LIST_PAGE_SIZE;
+      start < total;
+      start += PROJECT_LIST_PAGE_SIZE
+    ) {
+      pageStarts.push(start);
+    }
+
+    for (let i = 0; i < pageStarts.length; i += concurrency) {
+      const batch = pageStarts.slice(i, i + concurrency);
+      const pages = await Promise.all(
+        batch.map((start) => fetchProjectListPageWithRetry(headers, start)),
+      );
+      for (const page of pages) {
+        mergeProjectRows(byPid, page.rows);
+      }
+      if (i + concurrency < pageStarts.length && delayMs > 0) {
+        await sleep(delayMs);
+      }
     }
   }
 

@@ -213,6 +213,9 @@ export default function HomePage() {
     void (async () => {
       const count = await loadServices();
       if (cancelled || count > 0) return;
+      // Delay auto-sync so the page can render; user can also tap Sync manually.
+      await new Promise((r) => setTimeout(r, 800));
+      if (cancelled) return;
       await syncServicesFromDurian();
       if (!cancelled) await loadServices({ refresh: true });
     })();
