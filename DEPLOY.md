@@ -1,9 +1,9 @@
 # Deploy Durain SMS (free hosting)
 
-Your app already talks to Durian in real time for **countries**, **number stock**, and **balance**.  
-On the server it also **auto-syncs the full service catalog** (~2,600+ names) from the Durian panel when it runs.
+Your app talks to Durian in real time for **balance**, **countries**, **number stock**, **get number**, and **SMS**.  
+The **full service name catalog** (~2,600+ projects) comes from the Durian **web panel**; the server keeps it in `.cache/` and refreshes it on a schedule.
 
-This guide uses **[Render](https://render.com)** (free web service) — best fit because `npm start` keeps running and background auto-sync works like on your PC.
+This guide targets **[Render](https://render.com)** (free web service): `npm start` stays up so background refresh behaves like on your PC. For a fuller local setup, see **[README.md](./README.md)**.
 
 ---
 
@@ -11,54 +11,35 @@ This guide uses **[Render](https://render.com)** (free web service) — best fit
 
 | Data | How |
 |------|-----|
-| **Balance** | Live from Durian API every 30s in the UI |
-| **Countries & stock** | Live per service when you pick a country |
-| **Service names (2,600+)** | Panel sync on server boot + every 30 min (`DURIAN_AUTO_SYNC_MINUTES`) |
-| **Optional extra sync** | Cron hits `/api/cron/sync` (see below) |
+| **Balance** | Live from Durian API (~every 30s in the UI) |
+| **Countries & stock** | Live when you pick a service / country |
+| **Service names (2,600+)** | Panel-backed catalog in `.cache/`; UI also calls **`/api/services`** with cache-first + background refresh |
+| **Optional wake + sync** | External cron → **`/api/cron/sync`** with `CRON_SECRET` (see below) |
 
 ---
 
-## Before you deploy (one time on your PC)
+## Before you deploy
 
-1. Make sure the site works locally (`FIX-AND-START.bat` or `npm run dev`).
+1. Run the app locally once (**[README.md](./README.md)** — `.env.local`, `panel-login` or **`/panel-refresh`**, `durian-sync:force`) so you know credentials work.
 
-2. **Panel session for the cloud** (required for full service list):
+2. **Panel session for the cloud** (you need one working panel login for the full catalog):
 
-   **Option A — from your phone (no PC):** after deploy, sign in to your site → open **`/panel-refresh`** (or the footer link), solve the captcha, tap **Link Durian panel**. On Render set **`DURIAN_USE_DISK_PANEL_COOKIE=1`** so this session is preferred over a stale `DURIAN_SESSION_COOKIE`. You may clear `DURIAN_SESSION_COOKIE` in the dashboard when using disk-first mode.
+   | Approach | When to use |
+   |----------|-------------|
+   | **`/panel-refresh`** on the **live** site | Phone or any browser: sign in → open **`/panel-refresh`** (or footer **Renew Durian panel session**) → captcha → **Link Durian panel**. Set **`DURIAN_USE_DISK_PANEL_COOKIE=1`** on Render so this session is preferred over a stale **`DURIAN_SESSION_COOKIE`**. You can clear the env cookie when using disk-first mode. |
+   | **`npm run panel-login`** → **`npm run export-panel-cookie`** on a PC | Paste the printed line as **`DURIAN_SESSION_COOKIE`** on Render. |
 
-   **Option B — from your PC:**
+   Sessions **expire**; renew with **`/panel-refresh`** or repeat the PC export. After a **new deploy**, Render’s disk may be empty — run **`/panel-refresh` again** or update **`DURIAN_SESSION_COOKIE`**.
 
-   ```bash
-   npm run panel-login
-   npm run export-panel-cookie
-   ```
-
-   Copy the printed line — paste as `DURIAN_SESSION_COOKIE` on Render.
-
-   When the session expires, use **Option A** or repeat **Option B** and update the env var.
-
-3. Push the project to **GitHub** (private repo recommended):
-
-   ```bash
-   git init
-   git add .
-   git commit -m "Durain SMS"
-   git branch -M main
-   git remote add origin https://github.com/YOUR_USER/durain-sms.git
-   git push -u origin main
-   ```
-
-   Do **not** commit `.env.local` (it is gitignored).
+3. Push the project to **GitHub** (private repo recommended). Do **not** commit `.env.local`.
 
 ---
 
 ## Deploy on Render (free)
 
-1. Sign up at [render.com](https://render.com) → **New +** → **Web Service**.
+1. [render.com](https://render.com) → **New +** → **Web Service** → connect the repo.
 
-2. Connect your GitHub repo.
-
-3. Settings:
+2. **Build & start**
 
    | Field | Value |
    |--------|--------|
@@ -67,59 +48,56 @@ This guide uses **[Render](https://render.com)** (free web service) — best fit
    | **Start Command** | `npm start` |
    | **Plan** | Free |
 
-4. **Environment variables** (copy values from your local `.env.local`):
+3. **Environment variables** (mirror your local `.env.local`):
 
    | Key | Required | Notes |
    |-----|----------|--------|
+   | `SITE_AUTH_USERNAME` | Yes | Who can open **your** site |
+   | `SITE_AUTH_PASSWORD` | Yes | |
+   | `SITE_AUTH_SECRET` | Yes | Long random string (32+ chars); also used to seal **`/panel-refresh`** challenge cookies |
    | `DURIAN_USERNAME` | Yes | DurianRCS username |
-   | `DURIAN_API_KEY` | Yes | API key from Durian |
-   | `DURIAN_WEB_PASSWORD` | Yes | Web panel password |
-   | `DURIAN_SESSION_COOKIE` | Yes | From `npm run export-panel-cookie` |
-   | `SITE_AUTH_USERNAME` | Yes | Login for *your* site |
-   | `SITE_AUTH_PASSWORD` | Yes | Login for *your* site |
-   | `SITE_AUTH_SECRET` | Yes | Long random string (32+ chars) |
-   | `DURIAN_AUTO_SYNC_MINUTES` | No | Default `30` |
-   | `CRON_SECRET` | No | Random string if you use external cron |
+   | `DURIAN_API_KEY` | Yes | Durian API key |
+   | `DURIAN_WEB_PASSWORD` | Yes | Web panel password (used by **`/panel-refresh`** and `panel-login`) |
+   | `DURIAN_SESSION_COOKIE` | Recommended* | From `export-panel-cookie`, unless you rely only on **`/panel-refresh`** + disk |
+   | `DURIAN_USE_DISK_PANEL_COOKIE` | No | Set **`1`** so `.cache/panel-cookies.json` (from **`/panel-refresh`**) wins over env when both exist |
+   | `DURIAN_AUTO_SYNC_MINUTES` | No | Default **`30`** (in-app background catalog refresh) |
+   | `CRON_SECRET` | No | For **`/api/cron/sync`** (`Authorization: Bearer …` or `?secret=`) |
 
-5. Click **Create Web Service**. First deploy takes a few minutes.
+   \* On first boot you can leave `DURIAN_SESSION_COOKIE` empty, open the site, complete **`/panel-refresh`**, then set **`DURIAN_USE_DISK_PANEL_COOKIE=1`** and redeploy if you want that mode permanently.
 
-6. Open your URL (e.g. `https://durain-sms.onrender.com`) → log in with `SITE_AUTH_*`.
+4. **Create Web Service**. First build/deploy takes a few minutes.
 
-**Free tier note:** Render sleeps after ~15 minutes with no traffic. The first visit may take 30–60 seconds to wake up; auto-sync runs again after wake.
+5. Open your URL → sign in with `SITE_AUTH_*` → if the service list is empty, tap **Sync services from Durian** (can take **1–2 min** on first sync).
+
+**Free tier:** The service **sleeps** after ~15 minutes idle. The first request after sleep can take **30–60 seconds**. A cron ping (below) reduces cold starts.
 
 ---
 
-## Optional: cron ping (wake + sync)
+## Optional: cron (wake + catalog sync)
 
-If the app sleeps often, use a free cron service to call your sync URL every 6 hours:
+Ping **`https://YOUR-APP.onrender.com/api/cron/sync`** on a schedule (e.g. every 6 hours):
 
-- URL: `https://YOUR-APP.onrender.com/api/cron/sync`
-- Header: `Authorization: Bearer YOUR_CRON_SECRET`
-- Set `CRON_SECRET` on Render to the same value.
+- Header: `Authorization: Bearer YOUR_CRON_SECRET`  
+  (or query: `?secret=YOUR_CRON_SECRET` — same value as env **`CRON_SECRET`** on Render)
 
-Services: [cron-job.org](https://cron-job.org) (free) or [UptimeRobot](https://uptimerobot.com) (monitor + optional).
+Free schedulers: [cron-job.org](https://cron-job.org), [UptimeRobot](https://uptimerobot.com).
 
 ---
 
 ## Alternative: Vercel (free, with limits)
 
-Vercel is serverless — **no persistent `.cache` disk**, and sync can hit **10s timeouts** on the free plan. Use Render if you want the same behavior as local.
+Serverless = **no persistent `.cache`** like a long-running Node box. Catalog sync can hit **timeouts** on the free plan. **Prefer Render** if you want parity with local.
 
-If you still use Vercel:
-
-1. Import repo at [vercel.com](https://vercel.com).
-2. Add the same env vars as above.
-3. Set `CRON_SECRET` — Vercel cron (in `vercel.json`) sends `Authorization: Bearer <CRON_SECRET>` automatically.
-4. Expect first load after cold start to refresh services via API/cron.
+If you use Vercel: add the same env vars; optional **`vercel.json`** cron still needs a valid panel session path for a large catalog.
 
 ---
 
 ## Security checklist
 
-- Use a **private** GitHub repo.
-- Use a **strong** `SITE_AUTH_PASSWORD` and unique `SITE_AUTH_SECRET`.
-- Never commit `.env.local` or paste API keys in chat/screenshots.
-- Rotate Durian password / API key if they were ever exposed.
+- Private GitHub repo when possible.
+- Strong **`SITE_AUTH_PASSWORD`** and unique **`SITE_AUTH_SECRET`**.
+- Never commit **`.env.local`** or paste secrets in screenshots/chat.
+- Rotate Durian credentials if exposed.
 
 ---
 
@@ -127,19 +105,24 @@ If you still use Vercel:
 
 | Problem | Fix |
 |---------|-----|
-| **No services / search empty** | Set `DURIAN_SESSION_COOKIE` on Render, redeploy, tap **Sync services from Durian** |
-| Only ~1,700 generic “Project N” names | Set `DURIAN_SESSION_COOKIE`; run `npm run export-panel-cookie` again |
-| “Panel session expired” in logs | `npm run panel-login` locally → update `DURIAN_SESSION_COOKIE` on host |
-| Countries empty for a service | Check `DURIAN_API_KEY` and balance on Durian |
-| Site slow first time | Free Render cold start — visit again or use cron ping |
-| Sync manually | `GET /api/cron/sync` with `Authorization: Bearer CRON_SECRET` |
+| **No services / empty search** | Sign in → **`/panel-refresh`** → **Link**; or set **`DURIAN_SESSION_COOKIE`** from `export-panel-cookie`. Then **Sync services from Durian**. |
+| **“HTML instead of JSON” / panel session** | Cookie expired — **`/panel-refresh`** or refresh **`DURIAN_SESSION_COOKIE`**. With **`DURIAN_USE_DISK_PANEL_COOKIE=1`**, avoid an old env cookie shadowing a fresh disk session. |
+| **~1,700 generic “Project N” names** | Panel catalog not loaded — same as “no services”. |
+| **Countries empty / Get Number errors** | Check **`DURIAN_API_KEY`**, balance, and Durian API status (not the panel catalog). |
+| **First load very slow** | Render cold start — wait and retry, or use cron ping. |
+| **503 on panel sync** | Wait 1 min, **Sync** again; production defaults to **sequential** panel fetch (`DURIAN_PANEL_FETCH_MODE`). |
+
+The server **falls back to stale** `.cache/panel-projects.json` / **`services.json`** when the live panel fails, so a brief outage should not wipe the UI with a raw JSON error.
 
 ---
 
-## Quick reference (local)
+## Quick reference (local machine)
 
 ```bash
-npm run panel-login          # refresh panel session
-npm run export-panel-cookie  # print DURIAN_SESSION_COOKIE for cloud
-npm run durian-sync          # manual catalog sync
+npm run panel-login          # CLI captcha → .cache/panel-cookies.json
+npm run export-panel-cookie  # print DURIAN_SESSION_COOKIE for Render
+npm run durian-sync          # smart catalog sync
+npm run durian-sync:force    # force full panel pull
 ```
+
+On the **deployed** app, prefer **`/panel-refresh`** when you do not have a PC.

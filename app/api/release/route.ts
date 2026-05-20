@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { phoneForDurianExtApi } from "@/lib/format";
 import { DurianApiError, fetchDurian } from "@/lib/durian-api";
 
 export async function POST(request: NextRequest) {
@@ -9,10 +10,10 @@ export async function POST(request: NextRequest) {
     body = {};
   }
 
-  const pn = body.pn?.trim();
+  const pnRaw = body.pn?.trim();
   const pid = body.pid;
 
-  if (!pn || !pid) {
+  if (!pnRaw || !pid) {
     return NextResponse.json(
       { error: "pn and pid are required" },
       { status: 400 },
@@ -20,6 +21,7 @@ export async function POST(request: NextRequest) {
   }
 
   const serial = body.serial === 1 ? 1 : 2;
+  const pn = phoneForDurianExtApi(pnRaw);
 
   try {
     await fetchDurian("passMobile", { pn, pid, serial });

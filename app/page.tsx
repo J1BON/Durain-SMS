@@ -31,6 +31,10 @@ import {
   smsCodeCopyValue,
 } from "@/lib/format";
 import { readApiJson } from "@/lib/client-fetch-json";
+import {
+  fetchWithRetry,
+  isBrowserNetworkError,
+} from "@/lib/client-fetch-retry";
 import { useCountdown } from "@/lib/use-countdown";
 import {
   buildCountryList,
@@ -38,6 +42,7 @@ import {
   isCountryFavoriteCode,
   normalizeCountryCode,
   syncSelectedCountry,
+  US_COUNTRY_CODE,
 } from "@/lib/country-list";
 
 const POLL_INTERVAL_MS = 15_000;
@@ -103,6 +108,11 @@ export default function HomePage() {
   const expiryNotified = useRef(false);
   const countryFetchGen = useRef(0);
   const countriesPidRef = useRef<number | null>(null);
+  /** Last non-empty country list per service — used to avoid dropping US on flaky quiet refreshes. */
+  const lastCountriesSnapshotRef = useRef<{
+    pid: number;
+    rows: Country[];
+  } | null>(null);
   const favoriteCountryCodesRef = useRef(favoriteCountryCodes);
   const favoritesReadyRef = useRef(favoritesReady);
   const [countrySelectKey, setCountrySelectKey] = useState(0);
@@ -151,7 +161,7 @@ export default function HomePage() {
         const url = options?.refresh
           ? "/api/services?refresh=1"
           : "/api/services";
-        const res = await fetch(url, { cache: "no-store" });
+        const res = await fetchWithRetry(url);
         const body = (await readApiJson(res)) as {
           error?: string;
           services?: Service[];
@@ -250,7 +260,7 @@ export default function HomePage() {
 
   const loadBalance = useCallback(async () => {
     try {
-      const res = await fetch("/api/account");
+      const res = await fetchWithRetry("/api/account");
       const body = (await readApiJson(res)) as { balance?: number };
       if (res.ok && typeof body.balance === "number") {
         setBalance(body.balance);
@@ -342,6 +352,9 @@ export default function HomePage() {
 
       countriesPidRef.current = pid;
       setCountries(normalized);
+      if (normalized.length > 0) {
+        lastCountriesSnapshotRef.current = { pid, rows: normalized };
+      }
 
       const favCodes = favoritesReadyRef.current
         ? favoriteCountryCodesRef.current
@@ -366,9 +379,8 @@ export default function HomePage() {
       }
 
       try {
-        const res = await fetch(
+        const res = await fetchWithRetry(
           `/api/countries?pid=${pid}&_=${Date.now()}`,
-          { cache: "no-store" },
         );
         const body = (await readApiJson(res)) as {
           error?: string;
@@ -382,7 +394,24 @@ export default function HomePage() {
           throw new Error(body.error ?? "Failed to load countries");
         }
 
-        const list: Country[] = body.countries ?? [];
+        let list: Country[] = body.countries ?? [];
+
+        if (
+          options?.quiet &&
+          list.length > 0 &&
+          !list.some((c) => normalizeCountryCode(c.code) === US_COUNTRY_CODE)
+        ) {
+          const snap = lastCountriesSnapshotRef.current;
+          const prevUs =
+            snap?.pid === pid
+              ? snap.rows.find(
+                  (c) => normalizeCountryCode(c.code) === US_COUNTRY_CODE,
+                )
+              : undefined;
+          if (prevUs && prevUs.stock > 0) {
+            list = [...list, prevUs];
+          }
+        }
 
         if (list.length === 0 && options?.quiet) {
           return;
@@ -392,7 +421,13 @@ export default function HomePage() {
       } catch (e) {
         if (fetchGen !== countryFetchGen.current) return;
         if (!options?.quiet) {
-          setError(e instanceof Error ? e.message : "Failed to load countries");
+          setError(
+            isBrowserNetworkError(e)
+              ? "Network error while loading countries — retry in a moment."
+              : e instanceof Error
+                ? e.message
+                : "Failed to load countries",
+          );
         }
       } finally {
         if (!options?.quiet) {
@@ -420,6 +455,7 @@ export default function HomePage() {
 
     countryFetchGen.current += 1;
     countriesPidRef.current = selectedServicePid;
+    lastCountriesSnapshotRef.current = null;
     setCountries([]);
     setSelectedCountry("");
     setCountrySelectKey((k) => k + 1);
@@ -457,7 +493,7 @@ export default function HomePage() {
         pid: String(selectedService!.pid),
         serial: String(orderSerial),
       });
-      const res = await fetch(`/api/checkSms?${params}`);
+      const res = await fetchWithRetry(`/api/checkSms?${params}`);
       const body = (await readApiJson(res)) as {
         error?: string;
         pending?: boolean;
@@ -477,6 +513,7 @@ export default function HomePage() {
         const code = smsCodeCopyValue(String(body.code));
         setSmsCode(code);
         setWaitingSms(false);
+        setError(null);
         if (pollRef.current) {
           clearInterval(pollRef.current);
           pollRef.current = null;
@@ -490,6 +527,10 @@ export default function HomePage() {
         });
       }
     } catch (e) {
+      if (isBrowserNetworkError(e)) {
+        // Keep polling — do not flash a red banner every 15s on flaky networks / cold hosts.
+        return;
+      }
       setError(e instanceof Error ? e.message : "SMS check failed");
     } finally {
       setPolling(false);
@@ -546,7 +587,7 @@ export default function HomePage() {
         params.set("secret_key", secretKey.trim());
       }
 
-      const res = await fetch(`/api/getNumber?${params}`);
+      const res = await fetchWithRetry(`/api/getNumber?${params}`);
       const body = (await readApiJson(res)) as {
         error?: string;
         phoneNumber?: string;
@@ -563,7 +604,13 @@ export default function HomePage() {
       setPhoneNumber(body.phoneNumber);
       setNumberExpiresAt(Date.now() + NUMBER_TTL_MS);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to get number");
+      setError(
+        isBrowserNetworkError(e)
+          ? "Network error — check connection or wait for the host to wake up, then try again."
+          : e instanceof Error
+            ? e.message
+            : "Failed to get number",
+      );
     } finally {
       setLoadingNumber(false);
     }

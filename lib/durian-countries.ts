@@ -16,12 +16,16 @@ const US_ALIASES = new Set([
   "united-states",
   "united states",
   "1",
+  /** ISO 3166-1 numeric — some Durian payloads use this for the US row */
+  "840",
 ]);
 
 function isUsAlias(code: string): boolean {
-  const norm = code.trim().toLowerCase().replace(/[_\s-]+/g, "");
+  const trimmed = code.trim().toLowerCase();
+  const norm = trimmed.replace(/[_\s-]+/g, "");
   if (norm === "us" || norm === "usa" || norm === "unitedstates") return true;
-  return US_ALIASES.has(code.trim().toLowerCase());
+  if (trimmed === "840" || norm === "840") return true;
+  return US_ALIASES.has(trimmed);
 }
 
 function mergeUsAliases(

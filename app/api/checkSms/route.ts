@@ -1,16 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
+import { phoneForDurianExtApi } from "@/lib/format";
 import { DurianApiError, fetchDurian } from "@/lib/durian-api";
 
 export async function GET(request: NextRequest) {
-  const pn = request.nextUrl.searchParams.get("pn");
+  const pnRaw = request.nextUrl.searchParams.get("pn");
   const pid = request.nextUrl.searchParams.get("pid");
 
-  if (!pn || !pid) {
+  if (!pnRaw || !pid) {
     return NextResponse.json(
       { error: "pn and pid are required" },
       { status: 400 },
     );
   }
+
+  const pn = phoneForDurianExtApi(pnRaw);
 
   try {
     const serial = request.nextUrl.searchParams.get("serial") ?? "2";

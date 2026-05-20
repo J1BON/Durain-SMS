@@ -1,6 +1,6 @@
 # Durain SMS
 
-A mobile-friendly web app for **DurianRCS** — search 2,600+ services by name, pick a country, get a number, and receive SMS verification codes. Balance, countries, and stock sync live from Durian.
+A mobile-friendly web app for **DurianRCS** — search 2,600+ services by name, pick a country, get a number, and receive SMS verification codes. Balance, countries, and stock sync live from Durian. Copying a US number uses **national format** (e.g. `(317) 799-3900`) while the screen can still show `+1 …`.
 
 ---
 
@@ -71,7 +71,7 @@ DURIAN_WEB_PASSWORD=your_durian_web_panel_password
 
 The app loads **real service names** (Microsoft, Amazon, Rips, etc.) from the Durian **web panel**, not only the API.
 
-**Option A — recommended (captcha login):**
+**Option A — terminal (recommended on your PC):**
 
 ```bash
 npm run panel-login
@@ -81,7 +81,7 @@ npm run panel-login
 2. Enter the code when prompted.
 3. On success, the panel session is stored in `.cache/panel-cookies.json`.
 
-**Option B — manual cookie:**
+**Option B — manual cookie in `.env.local`:**
 
 1. Log in at [mm.durianrcs.com](https://mm.durianrcs.com) in your browser.
 2. DevTools → Application → Cookies → copy session cookies.
@@ -90,6 +90,12 @@ npm run panel-login
 ```env
 DURIAN_SESSION_COOKIE=PHPSESSID=xxx; other_cookie=yyy
 ```
+
+**Option C — browser while the dev server is running:**
+
+1. Start the app (`npm run dev`) and sign in.
+2. Open [http://localhost:3000/panel-refresh](http://localhost:3000/panel-refresh) (footer link **Renew Durian panel session** exists on the home page too).
+3. Load the captcha image, enter the code, tap **Link Durian panel** (uses `DURIAN_WEB_PASSWORD` from `.env.local`).
 
 ---
 
@@ -164,6 +170,8 @@ npm run panel-login
 npm run durian-sync:force
 ```
 
+(Or, with the dev server running: sign in → **`/panel-refresh`** → Link → then **`npm run durian-sync:force`** if you want to refresh disk cache immediately.)
+
 ### Step 4 — Restart the app
 
 ```bash
@@ -177,9 +185,10 @@ You should see the **new account’s balance** and full service list.
 ### Deploying with another account (Render / cloud)
 
 1. Update **all** Durian env vars on your host (`DURIAN_USERNAME`, `DURIAN_API_KEY`, `DURIAN_WEB_PASSWORD`).
-2. On your PC, run `npm run panel-login` + `npm run export-panel-cookie` while logged into the **new** panel.
-3. Paste the new line into `DURIAN_SESSION_COOKIE` on Render.
-4. Redeploy and tap **Sync services from Durian** once (wait 1–2 minutes).
+2. Refresh the panel session for the **new** account, using either:
+   - **`/panel-refresh`** on the live site (sign in → captcha → Link), with **`DURIAN_USE_DISK_PANEL_COOKIE=1`** on the host if you want disk to override an old env cookie, or
+   - On your PC: `npm run panel-login` → `npm run export-panel-cookie` → paste into **`DURIAN_SESSION_COOKIE`** on the host.
+3. Redeploy if you changed env vars, then tap **Sync services from Durian** once (wait 1–2 minutes).
 
 ---
 
@@ -194,13 +203,16 @@ You should see the **new account’s balance** and full service list.
 | `DURIAN_API_KEY` | Yes | DurianRCS API key |
 | `DURIAN_WEB_PASSWORD` | Yes* | Web panel password (`panel-login`) |
 | `DURIAN_SESSION_COOKIE` | Yes** | Panel cookie string; optional if you only use `/panel-refresh` + disk (see below) |
-| `DURIAN_USE_DISK_PANEL_COOKIE` | No | Set `1` on cloud hosts to prefer `.cache/panel-cookies.json` (written by `/panel-refresh`) over `DURIAN_SESSION_COOKIE` when both exist |
-| `DURIAN_AUTO_SYNC_MINUTES` | No | Background sync interval (default `30`) |
-| `DURIAN_PANEL_FETCH_MODE` | No | `sequential` on production (avoids 503); `parallel` for fast local |
-| `CRON_SECRET` | No | For `/api/cron/sync` on hosted deploy |
-| `DURIAN_AUTO_SYNC_DISABLED` | No | Set `1` to turn off background sync |
+| `DURIAN_USE_DISK_PANEL_COOKIE` | No | Set `1` on cloud hosts to prefer `.cache/panel-cookies.json` (written by **`/panel-refresh`**) over `DURIAN_SESSION_COOKIE` when both exist |
+| `DURIAN_SERVICE_CACHE_HOURS` | No | How long `.cache/services.json` is treated as fresh before panel refresh (default `12`) |
+| `DURIAN_AUTO_SYNC_MINUTES` | No | In-app background service list refresh interval (default `30`) |
+| `DURIAN_AUTO_SYNC_DISABLED` | No | Set `1` to turn off that background refresh |
+| `DURIAN_PANEL_FETCH_MODE` | No | `sequential` in production by default (avoids panel 503); `parallel` for fast local |
+| `DURIAN_PANEL_FETCH_CONCURRENCY` | No | Parallel panel page fetches when not sequential (default `3`) |
+| `DURIAN_PANEL_FETCH_DELAY_MS` | No | Delay between panel requests when throttling (default `120`) |
+| `CRON_SECRET` | No | For `/api/cron/sync` on hosted deploy (Bearer or `?secret=`) |
 
-\* Required for `npm run panel-login`  
+\* Required for **`npm run panel-login`** and browser **`/panel-refresh`** (server reads `DURIAN_WEB_PASSWORD` from env).  
 \** On Render you either paste `DURIAN_SESSION_COOKIE`, or rely on **`/panel-refresh`** after each deploy and set `DURIAN_USE_DISK_PANEL_COOKIE=1` (leave env cookie empty or remove when using disk-first mode).
 
 ---
@@ -213,7 +225,8 @@ You should see the **new account’s balance** and full service list.
 | `npm run dev:fresh` | Clear `.next` cache and start dev |
 | `npm run build` | Production build |
 | `npm run start` | Run production server |
-| `npm run panel-login` | Log into Durian web panel (captcha) |
+| `npm run clean` | Delete `.next` build cache |
+| `npm run panel-login` | Log into Durian web panel (captcha, CLI) |
 | `npm run export-panel-cookie` | Print `DURIAN_SESSION_COOKIE` for cloud hosting |
 | `npm run durian-sync` | Smart sync services from panel |
 | `npm run durian-sync:force` | Force full service catalog sync |
@@ -227,7 +240,7 @@ You should see the **new account’s balance** and full service list.
 2. **Search** a service by name (e.g. Microsoft, Rips).
 3. Pick **country** (US is listed first when stock exists).
 4. Optional: **Secret key**, **Single / Multiple** message mode.
-5. Tap **Get Number** → copy phone / wait for SMS code.
+5. Tap **Get Number** → copy phone / wait for SMS code (copy uses **national** format for US/CA, e.g. `(317) 799-3900`).
 6. **Balance** updates automatically from Durian.
 
 **Dark / light mode:** Use the moon/sun button (top-left on home, top-right on login).
@@ -253,18 +266,16 @@ Full cloud guide: **[DEPLOY.md](./DEPLOY.md)**
 
 Short version:
 
-1. Push project to GitHub (private repo).
-2. [Render](https://render.com) → New Web Service → connect repo.
-3. Build: `npm install && npm run build` · Start: `npm start`
-4. Add all env vars from `.env.local` plus:
+1. Push the project to GitHub (private repo recommended).
+2. [Render](https://render.com) → **New +** → **Web Service** → connect the repo.
+3. **Build:** `npm install && npm run build` · **Start:** `npm start`
+4. Add the same env vars as `.env.local` (**`SITE_AUTH_*`**, **`DURIAN_USERNAME`**, **`DURIAN_API_KEY`**, **`DURIAN_WEB_PASSWORD`** are required).
+5. **Panel session for the catalog** (pick one):
+   - **Phone / no PC:** open your Render URL → sign in → **`/panel-refresh`** (or the footer link) → captcha → **Link Durian panel** → set **`DURIAN_USE_DISK_PANEL_COOKIE=1`** on Render so that session beats a stale env cookie.
+   - **PC:** `npm run panel-login` → `npm run export-panel-cookie` → paste as **`DURIAN_SESSION_COOKIE`** on Render.
+6. Open the site → **Sync services from Durian** if the list is empty (first time can take 1–2 minutes; free tier may cold-start ~30–60s).
 
-   ```bash
-   npm run export-panel-cookie
-   ```
-
-   → paste as `DURIAN_SESSION_COOKIE` on Render.
-
-5. Open your Render URL → login → **Sync services from Durian** (first time, wait 1–2 min).
+See **[DEPLOY.md](./DEPLOY.md)** for cron, troubleshooting, and Vercel notes.
 
 ---
 
@@ -273,13 +284,14 @@ Short version:
 | Problem | Fix |
 |---------|-----|
 | Login page spins forever | Pull latest code (login `Suspense` fix); hard refresh |
-| No services / search empty | Run `panel-login` + `durian-sync:force`; on Render set `DURIAN_SESSION_COOKIE` |
-| `Panel project list failed (503)` | Wait 1 min, tap **Sync** again; production uses slow sequential fetch |
-| Generic “Project N” names | Panel not linked — run `panel-login` or set `DURIAN_SESSION_COOKIE` |
+| No services / search empty | Use **`/panel-refresh`** on the deployed site or set `DURIAN_SESSION_COOKIE`; then **Sync services**. Locally: `panel-login` + `durian-sync:force` |
+| `Panel project list failed (503)` | Wait 1 min, tap **Sync** again; production uses sequential panel fetch by default |
+| Generic “Project N” names | Panel not linked — **`/panel-refresh`**, `panel-login`, or `DURIAN_SESSION_COOKIE` |
 | `ENOENT` / Next.js errors | `npm run dev:fresh` or delete `.next` folder |
 | Wrong balance / services | You may still be on old account — see **Using a different Durian account** |
 | Get Number disabled | Wait for countries to load; pick service + country |
-| Panel session expired, “HTML instead of JSON”, or sync errors | `DURIAN_SESSION_COOKIE` expired — run `npm run panel-login` → `export-panel-cookie`, paste into Render env, **Manual Deploy**. The server reuses the last saved catalog (`.cache/panel-projects.json`) when the live panel fails. |
+| Panel session expired, “HTML instead of JSON”, or sync errors | Renew session: **`/panel-refresh`** on the site, or `npm run panel-login` → `export-panel-cookie` → update **`DURIAN_SESSION_COOKIE`**. On Render use **`DURIAN_USE_DISK_PANEL_COOKIE=1`** if you rely on `/panel-refresh`. The server falls back to **stale** `.cache/panel-projects.json` / `services.json` when the live panel fails so you are not left with a raw JSON parse error. |
+| “Unexpected token `<`” / web page instead of JSON | Usually Durian or the host returned HTML; refresh the app. Server and UI now show clearer messages than a bare JSON parse error. |
 
 ---
 
@@ -297,8 +309,8 @@ Short version:
 
 | Path | Purpose |
 |------|---------|
-| `app/` | Next.js pages & API routes |
-| `lib/` | Durian API, panel sync, auth |
+| `app/` | Next.js pages & API routes (`/` orders, `/login`, **`/panel-refresh`**) |
+| `lib/` | Durian API, panel sync, auth, `client-fetch-json`, `panel-challenge-cookie` |
 | `components/` | UI components |
 | `.cache/` | Local service catalog & panel cookies (gitignored) |
 | `scripts/` | Panel login, auto-sync CLI |

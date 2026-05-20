@@ -4,6 +4,20 @@ export function digitsOnly(value: string): string {
 }
 
 /**
+ * Canonical E.164-ish value for Durian ext_api query params (`pn`, etc.).
+ * Accepts numbers the UI may show with spaces or parentheses.
+ */
+export function phoneForDurianExtApi(pn: string): string {
+  const raw = pn.trim();
+  const d = digitsOnly(raw);
+  if (!d) return raw;
+  if (raw.startsWith("+")) return `+${d}`;
+  if (d.length === 10) return `+1${d}`;
+  if (d.length === 11 && d.startsWith("1")) return `+${d}`;
+  return `+${d}`;
+}
+
+/**
  * National-format phone for clipboard (no country code).
  * US/CA: (317) 799-3900 — display may still show +1 (317) 799-3900.
  */
