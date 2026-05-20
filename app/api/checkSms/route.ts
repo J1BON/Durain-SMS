@@ -21,51 +21,41 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const serialParam = request.nextUrl.searchParams.get("serial") ?? "2";
-  const primarySerial = serialParam === "1" ? 1 : 2;
-  const serialsToTry: (1 | 2)[] =
-    primarySerial === 1 ? [1, 2] : [2, 1];
+  /** Must match the serial used in getMobile for this order — do not try the other value. */
+  const serial = request.nextUrl.searchParams.get("serial") === "1" ? 1 : 2;
 
   const variants = pnVariantsForDurianMsg(pnRaw);
   let lastPending: string | null = null;
   let lastError: DurianApiError | null = null;
 
   for (const pn of variants) {
-    for (const serial of serialsToTry) {
-      try {
-        const { data } = await fetchDurian<string>("getMsg", {
-          pn,
-          pid,
-          serial,
-        });
-        const code = extractSmsCode(data);
+    try {
+      const { data } = await fetchDurian<string>("getMsg", { pn, pid, serial });
+      const code = extractSmsCode(data);
 
-        if (code) {
-          return NextResponse.json({ code, pending: false, serial });
-        }
-
-        lastPending = "SMS not received yet";
-      } catch (err) {
-        if (err instanceof DurianApiError) {
-          if (isDurianSmsStillWaiting(err.apiCode, err.message)) {
-            lastPending = err.message;
-            continue;
-          }
-          if (err.apiCode === 905) {
-            lastError = err;
-            continue;
-          }
-          return NextResponse.json(
-            { error: err.message, code: err.apiCode },
-            { status: err.httpStatus },
-          );
-        }
-        console.error("[api/checkSms]", err);
-        return NextResponse.json(
-          { error: "Failed to check SMS" },
-          { status: 500 },
-        );
+      if (code) {
+        return NextResponse.json({ code, pending: false });
       }
+
+      lastPending = "SMS not received yet";
+    } catch (err) {
+      if (err instanceof DurianApiError) {
+        if (isDurianSmsStillWaiting(err.apiCode, err.message)) {
+          lastPending = err.message;
+          continue;
+        }
+        if (err.apiCode === 905) {
+          lastError = err;
+          continue;
+        }
+        lastPending = err.message;
+        continue;
+      }
+      console.error("[api/checkSms]", err);
+      return NextResponse.json(
+        { error: "Failed to check SMS" },
+        { status: 500 },
+      );
     }
   }
 

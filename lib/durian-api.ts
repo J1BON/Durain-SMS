@@ -125,7 +125,10 @@ export function isDurianSmsStillWaiting(apiCode: number, msg: string): boolean {
     m.includes("failed to receive sms") ||
     m.includes("message record") ||
     m.includes("not received yet") ||
-    m.includes("not received")
+    m.includes("not received") ||
+    m.includes("invalid series") ||
+    m.includes("series parameter") ||
+    m.includes("serial parameter")
   );
 }
 

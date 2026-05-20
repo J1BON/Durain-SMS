@@ -520,20 +520,8 @@ export default function HomePage() {
       }
 
       if (!res.ok) {
-        const apiCode =
-          typeof body.code === "number"
-            ? body.code
-            : Number(body.code) || 0;
-        const msg = body.error ?? "Failed to check SMS";
-        const keepWaiting =
-          apiCode === 907 ||
-          apiCode === 908 ||
-          /failed to receive sms|message record|not received yet/i.test(msg);
-        if (keepWaiting) {
-          setWaitingSms(true);
-          return;
-        }
-        throw new Error(msg);
+        setWaitingSms(true);
+        return;
       }
 
       if (body.code) {
@@ -553,12 +541,8 @@ export default function HomePage() {
           }
         });
       }
-    } catch (e) {
-      if (isBrowserNetworkError(e)) {
-        // Keep polling — do not flash a red banner every 15s on flaky networks / cold hosts.
-        return;
-      }
-      setError(e instanceof Error ? e.message : "SMS check failed");
+    } catch {
+      // While polling: never put SMS noise on the order form (907, series, network, etc.)
     } finally {
       smsPollInFlight.current = false;
       setPolling(false);
