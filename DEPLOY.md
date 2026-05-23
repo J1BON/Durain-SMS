@@ -110,6 +110,7 @@ If you use Vercel: add the same env vars; optional **`vercel.json`** cron still 
 | **~1,700 generic “Project N” names** | Panel catalog not loaded — same as “no services”. |
 | **Countries empty / Get Number errors** | Check **`DURIAN_API_KEY`**, balance, and Durian API status (not the panel catalog). |
 | **First load very slow** | Render cold start — wait and retry, or use cron ping. |
+| **cron-job.org “Failed (HTTP error)” on `/api/cron/sync`** | Bare URL returns **401**. Set **`CRON_SECRET`** on Render, then use **`https://YOUR-APP.onrender.com/api/cron/sync?secret=YOUR_CRON_SECRET`** (or `Authorization: Bearer …` header). |
 | **503 on panel sync** | Wait 1 min, **Sync** again; production defaults to **sequential** panel fetch (`DURIAN_PANEL_FETCH_MODE`). |
 
 The server **falls back to stale** `.cache/panel-projects.json` / **`services.json`** when the live panel fails, so a brief outage should not wipe the UI with a raw JSON error.

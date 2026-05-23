@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { DurianApiError } from "@/lib/durian-api";
 import { fetchDurianWithPnVariants } from "@/lib/durian-pn-action";
+import { verifySessionCookieValue, SESSION_COOKIE } from "@/lib/site-auth";
+import { recordNumberReleased } from "@/lib/tracking";
 
 export async function POST(request: NextRequest) {
   let body: { pn?: string; pid?: number; serial?: number } = {};
@@ -22,8 +25,21 @@ export async function POST(request: NextRequest) {
 
   const serial = body.serial === 1 ? 1 : 2;
 
+  const jar = await cookies();
+  const session = await verifySessionCookieValue(jar.get(SESSION_COOKIE)?.value);
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     await fetchDurianWithPnVariants("passMobile", pnRaw, { pid, serial });
+
+    try {
+      await recordNumberReleased(session.userId, pnRaw);
+    } catch {
+      // tracking failure must not break the main flow
+    }
+
     return NextResponse.json({ ok: true });
   } catch (err) {
     if (err instanceof DurianApiError) {

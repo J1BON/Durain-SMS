@@ -1,8 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { cuyForDurianApi } from "@/lib/country-list";
 import { DurianApiError, fetchDurian, parsePhoneData } from "@/lib/durian-api";
+import { verifySessionCookieValue, SESSION_COOKIE } from "@/lib/site-auth";
+import { recordNumberAssigned } from "@/lib/tracking";
 
 export async function GET(request: NextRequest) {
+  const jar = await cookies();
+  const session = await verifySessionCookieValue(jar.get(SESSION_COOKIE)?.value);
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const pid = request.nextUrl.searchParams.get("pid");
   const cuy = request.nextUrl.searchParams.get("cuy");
   const serialParam = request.nextUrl.searchParams.get("serial");
@@ -33,6 +42,18 @@ export async function GET(request: NextRequest) {
     const rawData =
       typeof data === "string" ? data : data != null ? String(data) : "";
     const apiPn = parsePhoneData(rawData);
+
+    try {
+      await recordNumberAssigned(
+        session.userId,
+        session.username,
+        apiPn,
+        pid,
+        cuy ?? "any",
+      );
+    } catch {
+      // tracking failure must not break the main flow
+    }
 
     return NextResponse.json({
       phoneNumber: apiPn,

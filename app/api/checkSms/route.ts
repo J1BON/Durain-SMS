@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { DurianApiError, fetchDurian, isDurianSmsStillWaiting } from "@/lib/durian-api";
 import { pnVariantsForDurianMsg } from "@/lib/durian-phone";
+import { verifySessionCookieValue, SESSION_COOKIE } from "@/lib/site-auth";
+import { recordSmsReceived } from "@/lib/tracking";
 
 export const dynamic = "force-dynamic";
 
@@ -11,6 +14,12 @@ function extractSmsCode(data: unknown): string {
 }
 
 export async function GET(request: NextRequest) {
+  const jar = await cookies();
+  const session = await verifySessionCookieValue(jar.get(SESSION_COOKIE)?.value);
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const pnRaw = request.nextUrl.searchParams.get("pn");
   const pid = request.nextUrl.searchParams.get("pid");
 
@@ -34,6 +43,12 @@ export async function GET(request: NextRequest) {
       const code = extractSmsCode(data);
 
       if (code) {
+        try {
+          await recordSmsReceived(session.userId, pnRaw, code);
+        } catch {
+          // tracking failure must not break the main flow
+        }
+
         return NextResponse.json({ code, pending: false });
       }
 

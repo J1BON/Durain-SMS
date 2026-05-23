@@ -12,6 +12,7 @@ import {
   MessageSquare,
   RotateCcw,
   Search,
+  Shield,
   LogOut,
   Smartphone,
   Star,
@@ -94,6 +95,30 @@ export default function HomePage() {
   const [servicePickerOpen, setServicePickerOpen] = useState(false);
   const [syncingServices, setSyncingServices] = useState(false);
   const [servicesHint, setServicesHint] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [lockedSetting, setLockedSetting] = useState<{
+    pid: number;
+    name: string;
+    country: string;
+  } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/auth/session")
+      .then((r) => r.json())
+      .then((d: { role?: string }) => {
+        if (d.role === "admin") setIsAdmin(true);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/settings")
+      .then((r) => r.json())
+      .then((d: { lock?: { pid: number; name: string; country: string } | null }) => {
+        setLockedSetting(d.lock ?? null);
+      })
+      .catch(() => undefined);
+  }, []);
 
   const {
     hydrated: favoritesReady,
@@ -459,6 +484,17 @@ export default function HomePage() {
   }, [countryOptions]);
 
   useEffect(() => {
+    if (!lockedSetting || services.length === 0) return;
+    const svc = services.find((s) => s.pid === lockedSetting.pid);
+    if (svc) setSelectedService(svc);
+  }, [lockedSetting, services]);
+
+  useEffect(() => {
+    if (!lockedSetting) return;
+    setSelectedCountry(lockedSetting.country);
+  }, [lockedSetting, countries]);
+
+  useEffect(() => {
     if (!selectedServicePid) {
       setCountries([]);
       setSelectedCountry("");
@@ -578,9 +614,11 @@ export default function HomePage() {
       return;
     }
 
-    const cuy = countryOptions.some((c) => c.code === selectedCountry)
-      ? selectedCountry
-      : "";
+    const cuy = lockedSetting
+      ? lockedSetting.country
+      : countryOptions.some((c) => c.code === selectedCountry)
+        ? selectedCountry
+        : "";
     if (!cuy) {
       setError("Please select a country");
       return;
@@ -775,11 +813,14 @@ export default function HomePage() {
 
   /** Locked while an active phone order is in progress */
   const orderLocked = loadingNumber || Boolean(phoneNumber);
-  const canPickService = !orderLocked && !loadingServices;
+  const adminLocked = Boolean(lockedSetting);
+  const canPickService = !orderLocked && !loadingServices && !adminLocked;
 
-  const activeCountryCode = countryOptions.some((c) => c.code === selectedCountry)
-    ? selectedCountry
-    : "";
+  const activeCountryCode = lockedSetting
+    ? lockedSetting.country
+    : countryOptions.some((c) => c.code === selectedCountry)
+      ? selectedCountry
+      : "";
 
   const selectedCountryRow = countryOptions.find(
     (c) => c.code === activeCountryCode,
@@ -802,14 +843,26 @@ export default function HomePage() {
       {/* Header */}
       <header className="relative mb-8 text-center">
         <ThemeToggle className="absolute left-0 top-0" />
-        <button
-          type="button"
-          className="btn btn-ghost btn-sm absolute right-0 top-0 rounded-lg text-base-content/50"
-          aria-label="Log out"
-          onClick={() => void handleLogout()}
-        >
-          <LogOut className="h-4 w-4" />
-        </button>
+        <div className="absolute right-0 top-0 flex items-center gap-1">
+          {isAdmin && (
+            <Link
+              href="/admin"
+              className="btn btn-ghost btn-sm rounded-lg text-primary/70"
+              aria-label="Admin dashboard"
+              title="Admin dashboard"
+            >
+              <Shield className="h-4 w-4" />
+            </Link>
+          )}
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm rounded-lg text-base-content/50"
+            aria-label="Log out"
+            onClick={() => void handleLogout()}
+          >
+            <LogOut className="h-4 w-4" />
+          </button>
+        </div>
         <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-base-300 bg-base-100 shadow-sm">
           <MessageSquare className="h-6 w-6 text-primary" strokeWidth={1.75} />
         </div>
@@ -840,6 +893,12 @@ export default function HomePage() {
               <label className="label-text text-sm font-medium" htmlFor="service-search">
                 Service
               </label>
+              {adminLocked && (
+                <span className="badge badge-primary badge-sm gap-1">
+                  <Shield className="h-3 w-3" />
+                  Locked by admin
+                </span>
+              )}
               <div className="flex items-center gap-2">
                 {!loadingServices && favoriteServices.length > 0 && (
                   <button
@@ -1183,6 +1242,7 @@ export default function HomePage() {
                 }
                 disabled={
                   orderLocked ||
+                  adminLocked ||
                   !selectedService ||
                   (loadingCountries && countryOptions.length === 0) ||
                   countryOptions.length === 0

@@ -39,7 +39,13 @@ npm install
 
 ---
 
-### 3. Create `.env.local`
+### 3. Supabase (multi-user login + admin dashboard)
+
+1. Create a free project at [supabase.com](https://supabase.com).
+2. Open **SQL Editor** and run the script in [`supabase/schema.sql`](./supabase/schema.sql).
+3. In **Settings → API**, copy **Project URL** and **service role** key (or anon key for small teams).
+
+### 4. Create `.env.local`
 
 Copy the example file:
 
@@ -52,22 +58,25 @@ copy .env.example .env.local
 Open `.env.local` and fill in **your** values:
 
 ```env
-# --- Your site login (who can open this app) ---
-SITE_AUTH_USERNAME=choose_a_username
-SITE_AUTH_PASSWORD=choose_a_strong_password
+SUPABASE_URL=https://your-project-id.supabase.co
+SUPABASE_SERVICE_KEY=your-supabase-key
+
 SITE_AUTH_SECRET=any_long_random_string_at_least_32_chars
 
-# --- DurianRCS API (your Durian account) ---
 DURIAN_USERNAME=your_durian_username
 DURIAN_API_KEY=your_durian_api_key
 DURIAN_WEB_PASSWORD=your_durian_web_panel_password
 ```
 
+Optional: set `SITE_AUTH_USERNAME` and `SITE_AUTH_PASSWORD` to seed **one admin** on first boot (instead of the default `admin` / `Admin@2024`).
+
 **Important:** Never commit `.env.local` to Git. It is already in `.gitignore`.
+
+On first start, the app seeds accounts into Supabase (1 admin + up to 10 workers if using defaults). Change passwords in **Admin → User Management**.
 
 ---
 
-### 4. Link the Durian web panel (service names)
+### 5. Link the Durian web panel (service names)
 
 The app loads **real service names** (Microsoft, Amazon, Rips, etc.) from the Durian **web panel**, not only the API.
 
@@ -99,7 +108,7 @@ DURIAN_SESSION_COOKIE=PHPSESSID=xxx; other_cookie=yyy
 
 ---
 
-### 5. Sync the full service catalog
+### 6. Sync the full service catalog
 
 ```bash
 npm run durian-sync:force
@@ -109,7 +118,7 @@ This downloads ~2,600+ projects into `.cache/services.json`. First run can take 
 
 ---
 
-### 6. Start the app
+### 7. Start the app
 
 **Windows (one click):**
 
@@ -123,7 +132,9 @@ FIX-AND-START.bat
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) → sign in with `SITE_AUTH_USERNAME` / `SITE_AUTH_PASSWORD`.
+Open [http://localhost:3000](http://localhost:3000) → sign in (default admin: `admin` / `Admin@2024`, or your seeded `SITE_AUTH_*`).
+
+**Admin dashboard:** sign in as admin → shield icon (top right) or `/admin` — per-user SMS stats, user management, lock default service & country for all workers.
 
 ---
 
@@ -196,9 +207,11 @@ You should see the **new account’s balance** and full service list.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `SITE_AUTH_USERNAME` | Yes | Login username for **this** website |
-| `SITE_AUTH_PASSWORD` | Yes | Login password for **this** website |
+| `SUPABASE_URL` | Yes | Supabase project URL |
+| `SUPABASE_SERVICE_KEY` | Yes | Supabase service role or anon key (server-side only) |
 | `SITE_AUTH_SECRET` | Yes | Random secret for session cookies (32+ chars) |
+| `SITE_AUTH_USERNAME` | No | If set with `SITE_AUTH_PASSWORD`, seeds one admin on first boot |
+| `SITE_AUTH_PASSWORD` | No | Paired with `SITE_AUTH_USERNAME` for first-boot admin seed |
 | `DURIAN_USERNAME` | Yes | DurianRCS account username |
 | `DURIAN_API_KEY` | Yes | DurianRCS API key |
 | `DURIAN_WEB_PASSWORD` | Yes* | Web panel password (`panel-login`) |
@@ -236,7 +249,7 @@ You should see the **new account’s balance** and full service list.
 
 ## Using the app
 
-1. **Sign in** with your site credentials (`SITE_AUTH_*`).
+1. **Sign in** with your worker or admin account.
 2. **Search** a service by name (e.g. Microsoft, Rips).
 3. Pick **country** (**USA** is listed first when that row exists).
 4. Optional: **Secret key**, **Single / Multiple** message mode.
@@ -301,7 +314,7 @@ See **[DEPLOY.md](./DEPLOY.md)** for cron, troubleshooting, and Vercel notes.
 - Use a **strong** `SITE_AUTH_PASSWORD` and unique `SITE_AUTH_SECRET`.
 - Use a **private** GitHub repo if you deploy.
 - Rotate API keys if they were ever shared.
-- `SITE_AUTH_*` controls who can open **your** site; `DURIAN_*` is which Durian account the server uses.
+- Site logins live in **Supabase** (`site_users`); `DURIAN_*` is which Durian account the server uses for SMS.
 
 ---
 

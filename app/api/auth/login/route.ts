@@ -1,23 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   createSessionCookieValue,
-  getSiteCredentials,
   SESSION_COOKIE,
   SESSION_MAX_AGE_SEC,
-  verifySiteLogin,
 } from "@/lib/site-auth";
+import { findUserByCredentials } from "@/lib/users";
 
 export async function POST(request: NextRequest) {
-  if (!getSiteCredentials()) {
-    return NextResponse.json(
-      {
-        error:
-          "Site login is not configured. Set SITE_AUTH_USERNAME and SITE_AUTH_PASSWORD in .env.local",
-      },
-      { status: 500 },
-    );
-  }
-
   let body: { username?: string; password?: string } = {};
   try {
     body = (await request.json()) as { username?: string; password?: string };
@@ -35,18 +24,40 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  if (!verifySiteLogin(username, password)) {
+  let user;
+  try {
+    user = await findUserByCredentials(username, password);
+  } catch (e) {
+    console.error("[api/auth/login]", e);
+    return NextResponse.json(
+      {
+        error:
+          "Login database unavailable. Set SUPABASE_URL and SUPABASE_SERVICE_KEY, then run supabase/schema.sql.",
+      },
+      { status: 500 },
+    );
+  }
+
+  if (!user) {
     return NextResponse.json({ error: "Invalid username or password" }, { status: 401 });
   }
 
-  const response = NextResponse.json({ ok: true, username });
-  response.cookies.set(SESSION_COOKIE, await createSessionCookieValue(username), {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: SESSION_MAX_AGE_SEC,
+  const response = NextResponse.json({
+    ok: true,
+    username: user.username,
+    role: user.role,
   });
+  response.cookies.set(
+    SESSION_COOKIE,
+    await createSessionCookieValue(user.username, user.id, user.role),
+    {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: SESSION_MAX_AGE_SEC,
+    },
+  );
 
   return response;
 }

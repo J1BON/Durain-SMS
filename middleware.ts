@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import {
   SESSION_COOKIE,
-  verifySessionCookieValue,
+  verifySessionCookieShape,
 } from "@/lib/site-auth";
 
 const PUBLIC_PATHS = new Set(["/login", "/api/auth/login"]);
@@ -17,11 +17,22 @@ function isCronSyncRequest(request: NextRequest): boolean {
   return request.nextUrl.searchParams.get("secret") === secret;
 }
 
-export async function middleware(request: NextRequest) {
+export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  if (pathname === "/api/cron/sync" && isCronSyncRequest(request)) {
-    return NextResponse.next();
+  if (pathname === "/api/cron/sync") {
+    if (isCronSyncRequest(request)) {
+      return NextResponse.next();
+    }
+    const hasCronSecret = Boolean(process.env.CRON_SECRET?.trim());
+    return NextResponse.json(
+      {
+        error: hasCronSecret
+          ? "Cron auth required. Use Authorization: Bearer <CRON_SECRET> or ?secret=<CRON_SECRET> (same value as Render env CRON_SECRET)."
+          : "CRON_SECRET is not set on the server. Add it in Render Environment, redeploy, then call this URL with ?secret= or Bearer.",
+      },
+      { status: 401 },
+    );
   }
 
   if (
@@ -31,7 +42,7 @@ export async function middleware(request: NextRequest) {
   ) {
     if (pathname === "/login") {
       const token = request.cookies.get(SESSION_COOKIE)?.value;
-      if (await verifySessionCookieValue(token)) {
+      if (verifySessionCookieShape(token)) {
         return NextResponse.redirect(new URL("/", request.url));
       }
     }
@@ -39,7 +50,7 @@ export async function middleware(request: NextRequest) {
   }
 
   const token = request.cookies.get(SESSION_COOKIE)?.value;
-  const session = await verifySessionCookieValue(token);
+  const session = verifySessionCookieShape(token);
 
   if (!session) {
     if (pathname.startsWith("/api/")) {
@@ -50,6 +61,15 @@ export async function middleware(request: NextRequest) {
       loginUrl.searchParams.set("from", pathname);
     }
     return NextResponse.redirect(loginUrl);
+  }
+
+  const isAdminRoute =
+    pathname.startsWith("/admin") || pathname.startsWith("/api/admin");
+  if (isAdminRoute && session.role !== "admin") {
+    if (pathname.startsWith("/api/")) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    return NextResponse.redirect(new URL("/", request.url));
   }
 
   return NextResponse.next();

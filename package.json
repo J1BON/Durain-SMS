@@ -22,6 +22,7 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.49.8",
     "daisyui": "^5.0.43",
     "lucide-react": "^0.511.0",
     "next": "^15.3.3",
