@@ -22,6 +22,20 @@ export interface UserStats {
   totalAssigned: number;
 }
 
+export interface DailyUserStats {
+  date: string;
+  userId: string;
+  username: string;
+  smsReceived: number;
+  numbersReleased: number;
+  totalAssigned: number;
+}
+
+/** Calendar day (UTC) from assignment timestamp. */
+export function dateKeyFromAssignedAt(assignedAt: number): string {
+  return new Date(assignedAt).toISOString().slice(0, 10);
+}
+
 type DbRow = {
   id: string;
   user_id: string;
@@ -123,6 +137,48 @@ export async function recordNumberReleased(
       })
       .eq("id", data[0].id);
   }
+}
+
+export async function getDailyUsersStats(
+  userList: { id: string; username: string }[],
+  options?: { days?: number },
+): Promise<DailyUserStats[]> {
+  const days = Math.min(365, Math.max(1, options?.days ?? 30));
+  const since = Date.now() - days * 24 * 60 * 60 * 1000;
+  const sb = getSupabase();
+  const { data } = await sb
+    .from("sms_tracking")
+    .select("user_id, assigned_at, received_sms, released")
+    .gte("assigned_at", since);
+
+  const userMap = new Map(userList.map((u) => [u.id, u.username]));
+  const buckets = new Map<string, DailyUserStats>();
+
+  for (const row of data ?? []) {
+    if (!userMap.has(row.user_id)) continue;
+    const date = dateKeyFromAssignedAt(row.assigned_at);
+    const bucketKey = `${date}\0${row.user_id}`;
+    let entry = buckets.get(bucketKey);
+    if (!entry) {
+      entry = {
+        date,
+        userId: row.user_id,
+        username: userMap.get(row.user_id)!,
+        smsReceived: 0,
+        numbersReleased: 0,
+        totalAssigned: 0,
+      };
+      buckets.set(bucketKey, entry);
+    }
+    entry.totalAssigned += 1;
+    if (row.received_sms) entry.smsReceived += 1;
+    else if (row.released) entry.numbersReleased += 1;
+  }
+
+  return [...buckets.values()].sort((a, b) => {
+    if (a.date !== b.date) return b.date.localeCompare(a.date);
+    return a.username.localeCompare(b.username);
+  });
 }
 
 export async function getAllUsersStats(

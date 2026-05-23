@@ -1,131 +1,402 @@
-# Deploy Durain SMS (free hosting)
+# Deploying Durain SMS for your team
 
-Your app talks to Durian in real time for **balance**, **countries**, **number stock**, **get number**, and **SMS**.  
-The **full service name catalog** (~2,600+ projects) comes from the Durian **web panel**; the server keeps it in `.cache/` and refreshes it on a schedule.
+This guide is for **whoever sets up the app** — you deploy once on Render, connect Supabase for logins, link your DurianRCS account, then give workers their own usernames. Workers only need the live URL and their credentials; they do not need Git, Supabase, or Render access.
 
-This guide targets **[Render](https://render.com)** (free web service): `npm start` stays up so background refresh behaves like on your PC. For a fuller local setup, see **[README.md](./README.md)**.
-
----
-
-## What stays in sync automatically
-
-| Data | How |
-|------|-----|
-| **Balance** | Live from Durian API (~every 30s in the UI) |
-| **Countries & stock** | Live when you pick a service / country |
-| **Service names (2,600+)** | Panel-backed catalog in `.cache/`; UI also calls **`/api/services`** with cache-first + background refresh |
-| **Optional wake + sync** | External cron → **`/api/cron/sync`** with `CRON_SECRET` (see below) |
+For local development on a PC, see **[README.md](./README.md)**.
 
 ---
 
-## Before you deploy
+## What you are deploying
 
-1. Run the app locally once (**[README.md](./README.md)** — `.env.local`, `panel-login` or **`/panel-refresh`**, `durian-sync:force`) so you know credentials work.
+| Piece | Role |
+|--------|------|
+| **This app (Next.js on Render)** | Web UI, Durian API proxy, admin dashboard |
+| **Supabase** | Stores site logins (`site_users`), SMS stats, admin “lock” settings |
+| **DurianRCS** | Real SMS numbers, balance, countries, service catalog |
 
-2. **Panel session for the cloud** (you need one working panel login for the full catalog):
+```mermaid
+flowchart LR
+  Workers[Workers browser] --> App[Durain SMS on Render]
+  Admin[Admin browser] --> App
+  App --> Supabase[(Supabase)]
+  App --> Durian[DurianRCS API + web panel]
+```
 
-   | Approach | When to use |
-   |----------|-------------|
-   | **`/panel-refresh`** on the **live** site | Phone or any browser: sign in → open **`/panel-refresh`** (or footer **Renew Durian panel session**) → captcha → **Link Durian panel**. Set **`DURIAN_USE_DISK_PANEL_COOKIE=1`** on Render so this session is preferred over a stale **`DURIAN_SESSION_COOKIE`**. You can clear the env cookie when using disk-first mode. |
-   | **`npm run panel-login`** → **`npm run export-panel-cookie`** on a PC | Paste the printed line as **`DURIAN_SESSION_COOKIE`** on Render. |
+**Features after setup:**
 
-   Sessions **expire**; renew with **`/panel-refresh`** or repeat the PC export. After a **new deploy**, Render’s disk may be empty — run **`/panel-refresh` again** or update **`DURIAN_SESSION_COOKIE`**.
-
-3. Push the project to **GitHub** (private repo recommended). Do **not** commit `.env.local`.
-
----
-
-## Deploy on Render (free)
-
-1. [render.com](https://render.com) → **New +** → **Web Service** → connect the repo.
-
-2. **Build & start**
-
-   | Field | Value |
-   |--------|--------|
-   | **Runtime** | Node |
-   | **Build Command** | `npm install && npm run build` |
-   | **Start Command** | `npm start` |
-   | **Plan** | Free |
-
-3. **Supabase** (multi-user login + admin dashboard)
-
-   1. Create a project at [supabase.com](https://supabase.com).
-   2. **SQL Editor** → run everything in [`supabase/schema.sql`](./supabase/schema.sql) (choose **Run without RLS** if prompted).
-   3. **Settings → API** → copy **Project URL** and the legacy **service_role** key (not the publishable/anon key).
-
-4. **Environment variables** (mirror your local `.env.local`):
-
-   | Key | Required | Notes |
-   |-----|----------|--------|
-   | `SUPABASE_URL` | Yes | `https://YOUR-PROJECT.supabase.co` only — **no** `/rest/v1/` suffix |
-   | `SUPABASE_SERVICE_KEY` | Yes | Legacy **service_role** JWT (or full secret key from API settings) |
-   | `SITE_AUTH_USERNAME` | Recommended | Seeds/syncs the admin row in `site_users` on server start |
-   | `SITE_AUTH_PASSWORD` | Recommended | Must match what you use to sign in (stored in Supabase) |
-   | `SITE_AUTH_SECRET` | Yes | Long random string (32+ chars); also used to seal **`/panel-refresh`** challenge cookies |
-   | `DURIAN_USERNAME` | Yes | DurianRCS username |
-   | `DURIAN_API_KEY` | Yes | Durian API key |
-   | `DURIAN_WEB_PASSWORD` | Yes | Web panel password (used by **`/panel-refresh`** and `panel-login`) |
-   | `DURIAN_SESSION_COOKIE` | Recommended* | From `export-panel-cookie`, unless you rely only on **`/panel-refresh`** + disk |
-   | `DURIAN_USE_DISK_PANEL_COOKIE` | No | Set **`1`** so `.cache/panel-cookies.json` (from **`/panel-refresh`**) wins over env when both exist |
-   | `DURIAN_AUTO_SYNC_MINUTES` | No | Default **`30`** (in-app background catalog refresh) |
-   | `CRON_SECRET` | No | For **`/api/cron/sync`** (`Authorization: Bearer …` or `?secret=`) |
-
-   \* On first boot you can leave `DURIAN_SESSION_COOKIE` empty, open the site, complete **`/panel-refresh`**, then set **`DURIAN_USE_DISK_PANEL_COOKIE=1`** and redeploy if you want that mode permanently.
-
-5. **Create Web Service**. First build/deploy takes a few minutes.
-
-6. Open your URL → sign in with your admin username/password from Supabase (`site_users`, usually matching `SITE_AUTH_*` on Render) → if the service list is empty, tap **Sync services from Durian** (can take **1–2 min** on first sync). Admin dashboard: **`/admin`**.
-
-**Free tier:** The service **sleeps** after ~15 minutes idle. The first request after sleep can take **30–60 seconds**. A cron ping (below) reduces cold starts.
+- Multi-user login (1 admin + up to 10 workers)
+- Admin dashboard at `/admin` (stats, user management, lock service/country for everyone)
+- Service search (~2,600+ names from Durian web panel)
+- Optional cron to wake the server and refresh the catalog
 
 ---
 
-## Optional: cron (wake + catalog sync)
+## Before you start (checklist)
 
-Ping **`https://YOUR-APP.onrender.com/api/cron/sync`** on a schedule (e.g. every 6 hours):
+Create or have ready:
 
-- Header: `Authorization: Bearer YOUR_CRON_SECRET`  
-  (or query: `?secret=YOUR_CRON_SECRET` — same value as env **`CRON_SECRET`** on Render)
+| # | Item | Link |
+|---|------|------|
+| 1 | **GitHub account** | [github.com](https://github.com) |
+| 2 | **Render account** | [render.com](https://render.com) |
+| 3 | **Supabase account** (free tier) | [supabase.com](https://supabase.com) |
+| 4 | **DurianRCS account** with API key + web panel password | Your provider |
+
+Collect from DurianRCS:
+
+| Credential | Used for |
+|------------|----------|
+| Username | `DURIAN_USERNAME` |
+| API key | `DURIAN_API_KEY` |
+| Web panel password | `DURIAN_WEB_PASSWORD`, `/panel-refresh` |
+
+Generate on your machine (any password generator):
+
+| Secret | Used for |
+|--------|----------|
+| Long random string (32+ chars) | `SITE_AUTH_SECRET` |
+| Long random string (optional) | `CRON_SECRET` |
+
+---
+
+## Part 1 — Supabase (database)
+
+Do this **once per deployment**. Every Render instance that shares the same Supabase project shares the same users and stats.
+
+### 1.1 Create a project
+
+1. Log in at [supabase.com](https://supabase.com).
+2. **New project** → pick a name and region → set a **database password** (save it; you rarely need it for this app).
+3. Wait until the project is **Active**.
+
+### 1.2 Run the schema
+
+1. Open **SQL Editor** → **New query**.
+2. Copy the full contents of [`supabase/schema.sql`](./supabase/schema.sql) from this repo.
+3. Paste and click **Run**.
+4. If Supabase warns about RLS, choose **Run without RLS** (the schema disables RLS on these tables; the app uses the service key server-side only).
+
+You should have three tables: `site_users`, `sms_tracking`, `site_settings`.
+
+### 1.3 Get API credentials
+
+1. Go to **Project Settings** → **API** (or **API Keys**).
+2. Copy **Project URL** → you will set `SUPABASE_URL`.
+   - Correct: `https://abcdefghij.supabase.co`
+   - Wrong: `https://abcdefghij.supabase.co/rest/v1/` ← do **not** include `/rest/v1/`
+3. Copy the **service_role** key (legacy) or a full **secret** API key.
+   - Use **service_role** / **secret** on Render (server only).
+   - Do **not** use the publishable/anon key for `SUPABASE_SERVICE_KEY`.
+
+**Legacy keys:** Settings → API → **Legacy anon, service_role API keys** → Reveal **service_role**.
+
+---
+
+## Part 2 — GitHub (source code)
+
+### 2.1 Put the code on GitHub
+
+**Option A — you own the repo**
+
+```bash
+git clone https://github.com/YOUR_ORG/durain-sms.git
+cd durain-sms
+```
+
+**Option B — fork for a new team**
+
+Fork the repo to your GitHub account (or create a new private repo and push this code).
+
+**Important:** Never commit `.env.local`. It is gitignored.
+
+### 2.2 Branch to deploy
+
+Render should deploy **`main`** (or your default branch). Push all changes there before connecting Render.
+
+---
+
+## Part 3 — Render (hosting)
+
+### 3.1 Create the web service
+
+1. [dashboard.render.com](https://dashboard.render.com) → **New +** → **Web Service**.
+2. Connect your GitHub account and select the **Durain SMS** repository.
+3. Configure:
+
+| Field | Value |
+|--------|--------|
+| **Name** | e.g. `durain-sms` |
+| **Region** | Closest to your users |
+| **Branch** | `main` |
+| **Runtime** | Node |
+| **Build Command** | `npm install && npm run build` |
+| **Start Command** | `npm start` |
+| **Instance type** | Free (or paid if you need no sleep) |
+
+4. Do **not** deploy yet if you can add env vars first (or deploy once, then fix env and redeploy).
+
+### 3.2 Environment variables
+
+Open **Environment** and add every **required** variable below. Use **real values**; Render masks secrets after save.
+
+#### Required — Supabase
+
+| Key | Example | Notes |
+|-----|---------|--------|
+| `SUPABASE_URL` | `https://xxxxx.supabase.co` | Project URL only, no path suffix |
+| `SUPABASE_SERVICE_KEY` | `eyJhbGciOiJIUzI1NiIs...` (long JWT) | **service_role**, not anon |
+
+#### Required — site sessions
+
+| Key | Example | Notes |
+|-----|---------|--------|
+| `SITE_AUTH_SECRET` | `a1b2c3...` (32+ random chars) | Signs login cookies; also used by `/panel-refresh` |
+
+#### Recommended — first admin (login)
+
+| Key | Example | Notes |
+|-----|---------|--------|
+| `SITE_AUTH_USERNAME` | `admin` or your name | Used to seed/sync admin in `site_users` |
+| `SITE_AUTH_PASSWORD` | strong password | **This is what you type on the login page** (stored in Supabase) |
+
+On first boot, if `site_users` is empty, the app creates one admin from `SITE_AUTH_*`. If the table already has users, login uses **Supabase only** — env vars alone do not change the password unless you update the row in Supabase or use **Admin → User Management**.
+
+#### Required — DurianRCS
+
+| Key | Example | Notes |
+|-----|---------|--------|
+| `DURIAN_USERNAME` | your Durian login | |
+| `DURIAN_API_KEY` | from Durian dashboard | |
+| `DURIAN_WEB_PASSWORD` | web panel password | For `/panel-refresh` |
+
+#### Recommended — Durian panel catalog (service names)
+
+| Key | Value | Notes |
+|-----|--------|--------|
+| `DURIAN_USE_DISK_PANEL_COOKIE` | `1` | Prefer session saved on server via `/panel-refresh` |
+| `DURIAN_SESSION_COOKIE` | *(optional)* | From PC: `npm run export-panel-cookie` |
+
+Leave `DURIAN_SESSION_COOKIE` empty if you will use **`/panel-refresh`** on the live site (see Part 5).
+
+#### Optional
+
+| Key | Default | Notes |
+|-----|---------|--------|
+| `DURIAN_AUTO_SYNC_MINUTES` | `30` | Background catalog refresh |
+| `CRON_SECRET` | — | For `/api/cron/sync` (wake + sync) |
+| `NODE_VERSION` | `22` | Set in `render.yaml` if using blueprint |
+
+### 3.3 Deploy
+
+Click **Save, rebuild, and deploy** (or **Manual Deploy** → **Deploy latest commit**).
+
+First build often takes **3–8 minutes**. Watch **Logs** for `Ready` / listening on port.
+
+Your URL will look like: `https://durain-sms.onrender.com`
+
+---
+
+## Part 4 — Verify the deployment
+
+### 4.1 Login
+
+1. Open `https://YOUR-APP.onrender.com/login`.
+2. Sign in with **`SITE_AUTH_USERNAME`** and **`SITE_AUTH_PASSWORD`** from Render (if you set them and ran schema before first boot).
+
+**If login fails with “Invalid username or password”:**
+
+| Check | Action |
+|--------|--------|
+| Wrong Supabase project | `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` must match the project where you ran `schema.sql` |
+| Wrong URL format | `SUPABASE_URL` must **not** end with `/rest/v1/` |
+| Wrong API key | Use **service_role** JWT, not publishable/anon |
+| Password mismatch | In Supabase **Table Editor** → `site_users` → edit `password` to match what you type, or set admin password in `/admin` after logging in with defaults |
+| Default accounts | If you never set `SITE_AUTH_*`, try `admin` / `Admin@2024` once, then change password in **Admin** |
+
+### 4.2 Admin dashboard
+
+1. After login, open the **shield** icon or go to `/admin`.
+2. If you are not admin, your user’s `role` in `site_users` must be `admin`.
+
+---
+
+## Part 5 — Durian panel session (service list)
+
+The app needs a **Durian web panel** session to load real service names (Microsoft, Amazon, etc.). API key alone is not enough for the full catalog.
+
+### Option A — From a phone or any browser (no PC)
+
+Best for ongoing ops.
+
+1. Sign in to your live site.
+2. Open **`/panel-refresh`** (or footer link **Renew Durian panel session**).
+3. Enter the captcha → **Link Durian panel**.
+4. On Render, set `DURIAN_USE_DISK_PANEL_COOKIE=1` and redeploy if not already set.
+
+Repeat when the catalog stops updating or sync returns HTML/session errors. **After each new deploy** on Render free tier, disk may be empty — run `/panel-refresh` once again.
+
+### Option B — From a PC (one-time cookie in env)
+
+```bash
+npm install
+# copy .env.example → .env.local and fill DURIAN_* + SITE_AUTH_*
+npm run panel-login
+npm run export-panel-cookie
+```
+
+Paste the printed line into Render as **`DURIAN_SESSION_COOKIE`**.
+
+### 5.1 Sync services
+
+1. On the home page, tap **Sync services from Durian**.
+2. First sync can take **1–2 minutes**; wait for the count to appear.
+3. In **Admin → Set lock**, you can search services and countries (requires sync + panel session).
+
+---
+
+## Part 6 — Set up your team
+
+### 6.1 Create worker accounts
+
+1. Sign in as **admin** → `/admin`.
+2. **User Management** → add users (role **user**).
+3. Maximum **10 worker** accounts; unlimited admins if you add more admin rows manually in Supabase.
+
+Share with each worker:
+
+- App URL: `https://YOUR-APP.onrender.com`
+- Their **username** and **password** (from admin; not `SITE_AUTH_*` on Render unless they are the admin).
+
+### 6.2 Lock service & country (optional)
+
+In **Admin → Default Service & Country**:
+
+1. Click **Set lock** or **Change**.
+2. Search for a service → click to select.
+3. Search for a country → pick from the list.
+4. **Apply lock** — all workers then use that service/country only.
+
+### 6.3 What workers see
+
+- Home: get numbers, SMS codes, balance
+- No access to `/admin` unless their role is `admin`
+- If lock is active, service/country pickers are fixed
+
+---
+
+## Part 7 — Keep the app awake (optional)
+
+Render **free** tier sleeps after ~15 minutes idle. First visit after sleep can take **30–60 seconds**.
+
+### External cron
+
+1. Set `CRON_SECRET` on Render to a long random string.
+2. Schedule a GET request every **6–14 minutes** to:
+
+```text
+https://YOUR-APP.onrender.com/api/cron/sync?secret=YOUR_CRON_SECRET
+```
+
+Or header: `Authorization: Bearer YOUR_CRON_SECRET`
 
 Free schedulers: [cron-job.org](https://cron-job.org), [UptimeRobot](https://uptimerobot.com).
 
----
-
-## Alternative: Vercel (free, with limits)
-
-Serverless = **no persistent `.cache`** like a long-running Node box. Catalog sync can hit **timeouts** on the free plan. **Prefer Render** if you want parity with local.
-
-If you use Vercel: add the same env vars; optional **`vercel.json`** cron still needs a valid panel session path for a large catalog.
+**Note:** A bare URL without `secret` returns **401** — that is expected.
 
 ---
 
-## Security checklist
+## Part 8 — Handoff document (copy for your team)
 
-- Private GitHub repo when possible.
-- Strong **`SITE_AUTH_PASSWORD`** and unique **`SITE_AUTH_SECRET`**.
-- Never commit **`.env.local`** or paste secrets in screenshots/chat.
-- Rotate Durian credentials if exposed.
+You can send something like this to workers:
+
+---
+
+**Durain SMS — access**
+
+- **URL:** `https://YOUR-APP.onrender.com`
+- **Your username:** *(from admin)*
+- **Your password:** *(from admin)*
+
+**How to use:** Sign in → search a service → choose country → Get Number → copy SMS code.
+
+**Problems?** Contact admin. Do not share your password.
+
+---
+
+**For admins only**
+
+- Admin panel: `https://YOUR-APP.onrender.com/admin`
+- Renew Durian catalog: sign in → `/panel-refresh` → captcha → Link
+- Empty service list: **Sync services from Durian** on home page
+
+---
+
+## Part 9 — Updates and maintenance
+
+| Task | How |
+|------|-----|
+| Deploy new code | Push to `main` → Render auto-deploys (or Manual Deploy) |
+| Change env vars | Render → Environment → Save → redeploy |
+| Rotate site password | Admin → edit user, or Supabase `site_users` |
+| Rotate Durian account | Update all `DURIAN_*` on Render, clear panel session, `/panel-refresh`, sync services |
+| New Supabase project | New project + run `schema.sql` + update Render env (users do not migrate automatically) |
+
+---
+
+## Environment variables (full reference)
+
+See also [`.env.example`](./.env.example) and [README.md](./README.md#environment-variables-reference).
+
+| Variable | Required on Render | Description |
+|----------|-------------------|-------------|
+| `SUPABASE_URL` | Yes | Supabase project URL (no `/rest/v1/`) |
+| `SUPABASE_SERVICE_KEY` | Yes | service_role or secret key |
+| `SITE_AUTH_SECRET` | Yes | Session signing (32+ chars) |
+| `SITE_AUTH_USERNAME` | Recommended | Admin username seed/sync |
+| `SITE_AUTH_PASSWORD` | Recommended | Admin password (login + Supabase) |
+| `DURIAN_USERNAME` | Yes | DurianRCS username |
+| `DURIAN_API_KEY` | Yes | Durian API key |
+| `DURIAN_WEB_PASSWORD` | Yes | Web panel password |
+| `DURIAN_SESSION_COOKIE` | Optional* | Panel cookie string |
+| `DURIAN_USE_DISK_PANEL_COOKIE` | Recommended | `1` = prefer `/panel-refresh` session on disk |
+| `DURIAN_AUTO_SYNC_MINUTES` | No | Default `30` |
+| `CRON_SECRET` | No | Cron auth for `/api/cron/sync` |
+
+\*Optional if you use `/panel-refresh` with `DURIAN_USE_DISK_PANEL_COOKIE=1`.
 
 ---
 
 ## Troubleshooting
 
-| Problem | Fix |
-|---------|-----|
-| **No services / empty search** | Sign in → **`/panel-refresh`** → **Link**; or set **`DURIAN_SESSION_COOKIE`** from `export-panel-cookie`. Then **Sync services from Durian**. |
-| **“HTML instead of JSON” / panel session** | Cookie expired — **`/panel-refresh`** or refresh **`DURIAN_SESSION_COOKIE`**. With **`DURIAN_USE_DISK_PANEL_COOKIE=1`**, avoid an old env cookie shadowing a fresh disk session. |
-| **~1,700 generic “Project N” names** | Panel catalog not loaded — same as “no services”. |
-| **Countries empty / Get Number errors** | Check **`DURIAN_API_KEY`**, balance, and Durian API status (not the panel catalog). |
-| **First load very slow** | Render cold start — wait and retry, or use cron ping. |
-| **cron-job.org “Failed (HTTP error)” on `/api/cron/sync`** | Bare URL returns **401**. Set **`CRON_SECRET`** on Render, then use **`https://YOUR-APP.onrender.com/api/cron/sync?secret=YOUR_CRON_SECRET`** (or `Authorization: Bearer …` header). |
-| **503 on panel sync** | Wait 1 min, **Sync** again; production defaults to **sequential** panel fetch (`DURIAN_PANEL_FETCH_MODE`). |
-
-The server **falls back to stale** `.cache/panel-projects.json` / **`services.json`** when the live panel fails, so a brief outage should not wipe the UI with a raw JSON error.
+| Problem | Likely cause | Fix |
+|---------|----------------|-----|
+| **Invalid username or password** | Supabase env wrong or user row mismatch | Fix `SUPABASE_URL` / `SUPABASE_SERVICE_KEY`; check `site_users` in Table Editor |
+| **Login database unavailable** | Missing/invalid Supabase env | Set both Supabase vars; redeploy |
+| **403 on /admin** | User is not admin | Set `role` = `admin` in `site_users` |
+| **Empty service search** | No panel session | `/panel-refresh` or `DURIAN_SESSION_COOKIE`; then **Sync services** |
+| **“Project N” generic names** | Catalog not from panel | Same as above |
+| **Admin lock search empty** | Services not synced | Sync services; wait 1–2 min |
+| **Countries empty / Get Number disabled** | API/balance/stock | Check `DURIAN_API_KEY`, Durian balance, pick service with stock |
+| **HTML instead of JSON / panel errors** | Expired panel cookie | `/panel-refresh` again |
+| **Very slow first load** | Render cold start | Wait 60s or use cron ping |
+| **cron 401** | Missing secret | Add `?secret=` or `Authorization: Bearer` |
+| **503 on sync** | Durian throttling | Wait 1 min; retry; production uses sequential panel fetch |
 
 ---
 
-## Quick reference (local machine)
+## Security checklist
+
+- Use a **private** GitHub repository.
+- Use strong, unique `SITE_AUTH_PASSWORD` and `SITE_AUTH_SECRET`.
+- Never commit `.env.local` or paste secrets in chat/screenshots.
+- Only share **worker** logins with workers; keep Render and Supabase access to operators.
+- `SUPABASE_SERVICE_KEY` bypasses RLS — server-only, never in the browser.
+- Rotate Durian API key and Supabase service role if they were ever exposed.
+- Change default `admin` / `Admin@2024` immediately if that seed was used.
+
+---
+
+## Quick reference (operator commands on a PC)
 
 ```bash
 npm run panel-login          # CLI captcha → .cache/panel-cookies.json
@@ -134,4 +405,26 @@ npm run durian-sync          # smart catalog sync
 npm run durian-sync:force    # force full panel pull
 ```
 
-On the **deployed** app, prefer **`/panel-refresh`** when you do not have a PC.
+On the **live** site, prefer **`/panel-refresh`** when you do not have a PC.
+
+---
+
+## Alternative: Vercel
+
+Serverless hosting has **no persistent `.cache`** like Render. Large catalog syncs may **timeout** on the free plan. **Render is recommended** for parity with local dev.
+
+If you still use Vercel: same env vars; use `/panel-refresh` after each deploy; expect colder starts and stricter time limits.
+
+---
+
+## Optional: Render Blueprint
+
+This repo includes [`render.yaml`](./render.yaml). You can import it as a **Blueprint** on Render, then fill in secret env vars in the dashboard (Supabase, Durian, `SITE_AUTH_*`).
+
+---
+
+## Related docs
+
+- **[README.md](./README.md)** — local install, scripts, daily use
+- **[`.env.example`](./.env.example)** — template for `.env.local`
+- **[`supabase/schema.sql`](./supabase/schema.sql)** — database setup

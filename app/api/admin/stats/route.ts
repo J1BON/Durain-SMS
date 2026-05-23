@@ -1,10 +1,14 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { verifySessionCookieValue, SESSION_COOKIE } from "@/lib/site-auth";
 import { getAllUsers } from "@/lib/users";
-import { getAllUsersStats, getRecentActivity } from "@/lib/tracking";
+import {
+  getAllUsersStats,
+  getDailyUsersStats,
+  getRecentActivity,
+} from "@/lib/tracking";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const jar = await cookies();
   const token = jar.get(SESSION_COOKIE)?.value;
   const session = await verifySessionCookieValue(token);
@@ -19,7 +23,12 @@ export async function GET() {
   ]);
 
   const regularUsers = allUsers.filter((u) => u.role === "user");
-  const stats = await getAllUsersStats(regularUsers);
+  const daysParam = request.nextUrl.searchParams.get("days");
+  const days = daysParam ? Number(daysParam) : 30;
+  const [stats, dailyStats] = await Promise.all([
+    getAllUsersStats(regularUsers),
+    getDailyUsersStats(regularUsers, { days }),
+  ]);
 
   return NextResponse.json({
     users: allUsers.map((u) => ({
@@ -29,6 +38,8 @@ export async function GET() {
       role: u.role,
     })),
     stats,
+    dailyStats,
+    reportDays: Math.min(365, Math.max(1, Number.isFinite(days) ? days : 30)),
     recent,
   });
 }

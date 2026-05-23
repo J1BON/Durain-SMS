@@ -273,22 +273,19 @@ After a **new deploy**, the host disk may be empty — run **`/panel-refresh` on
 
 ---
 
-## Deploy online (free — Render)
+## Deploy online (for you or your team)
 
-Full cloud guide: **[DEPLOY.md](./DEPLOY.md)**
+**Full step-by-step guide (Supabase + GitHub + Render + worker handoff):** **[DEPLOY.md](./DEPLOY.md)**
 
-Short version:
+That document is for whoever sets up the app for other people — not for end users. It covers database setup, every environment variable, first login, `/panel-refresh`, admin users, optional cron, and troubleshooting.
 
-1. Push the project to GitHub (private repo recommended).
-2. [Render](https://render.com) → **New +** → **Web Service** → connect the repo.
-3. **Build:** `npm install && npm run build` · **Start:** `npm start`
-4. Add the same env vars as `.env.local` (**`SITE_AUTH_*`**, **`DURIAN_USERNAME`**, **`DURIAN_API_KEY`**, **`DURIAN_WEB_PASSWORD`** are required).
-5. **Panel session for the catalog** (pick one):
-   - **Phone / no PC:** open your Render URL → sign in → **`/panel-refresh`** (or the footer link) → captcha → **Link Durian panel** → set **`DURIAN_USE_DISK_PANEL_COOKIE=1`** on Render so that session beats a stale env cookie.
-   - **PC:** `npm run panel-login` → `npm run export-panel-cookie` → paste as **`DURIAN_SESSION_COOKIE`** on Render.
-6. Open the site → **Sync services from Durian** if the list is empty (first time can take 1–2 minutes; free tier may cold-start ~30–60s).
+**Short checklist:**
 
-See **[DEPLOY.md](./DEPLOY.md)** for cron, troubleshooting, and Vercel notes.
+1. Supabase → run [`supabase/schema.sql`](./supabase/schema.sql) → copy URL + **service_role** key  
+2. GitHub → push repo (private recommended)  
+3. Render → Web Service → `npm install && npm run build` / `npm start` → add env vars from [DEPLOY.md](./DEPLOY.md)  
+4. Sign in → `/panel-refresh` → **Sync services from Durian** → `/admin` to add workers  
+5. Share the live URL + per-worker logins (not Render/Supabase access)
 
 ---
 

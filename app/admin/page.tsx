@@ -37,6 +37,15 @@ interface UserStats {
   totalAssigned: number;
 }
 
+interface DailyUserStats {
+  date: string;
+  userId: string;
+  username: string;
+  smsReceived: number;
+  numbersReleased: number;
+  totalAssigned: number;
+}
+
 interface UserInfo {
   id: string;
   username: string;
@@ -60,6 +69,8 @@ interface RecentEntry {
 interface StatsData {
   users: UserInfo[];
   stats: UserStats[];
+  dailyStats: DailyUserStats[];
+  reportDays: number;
   recent: RecentEntry[];
 }
 
@@ -90,6 +101,28 @@ interface EditState {
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleString();
 }
+
+function formatReportDate(isoDate: string): string {
+  const [y, m, d] = isoDate.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.toLocaleDateString(undefined, {
+    weekday: "short",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+const REPORT_DAY_OPTIONS = [
+  { value: 1, label: "Today" },
+  { value: 7, label: "Last 7 days" },
+  { value: 30, label: "Last 30 days" },
+  { value: 90, label: "Last 90 days" },
+] as const;
+
+/** Auto-refresh daily report + recent activity while admin tab is open. */
+const ADMIN_STATS_REFRESH_MS = 15_000;
 
 export default function AdminPage() {
   const router = useRouter();
@@ -132,25 +165,64 @@ export default function AdminPage() {
   const [lockSaving, setLockSaving] = useState(false);
   const [lockError, setLockError] = useState<string | null>(null);
   const [showLockForm, setShowLockForm] = useState(false);
+  const [reportDays, setReportDays] = useState(30);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<number | null>(null);
+  const [statsRefreshing, setStatsRefreshing] = useState(false);
 
-  const fetchStats = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/admin/stats");
-      if (!res.ok) {
-        if (res.status === 403) { router.replace("/"); return; }
-        throw new Error("Failed to load stats");
+  const fetchStats = useCallback(
+    async (options?: { quiet?: boolean }) => {
+      const quiet = options?.quiet ?? false;
+      if (!quiet) {
+        setLoading(true);
+        setError(null);
+      } else {
+        setStatsRefreshing(true);
       }
-      setData((await res.json()) as StatsData);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load");
-    } finally {
-      setLoading(false);
-    }
-  }, [router]);
+      try {
+        const res = await fetch(`/api/admin/stats?days=${reportDays}`, {
+          cache: "no-store",
+        });
+        if (!res.ok) {
+          if (res.status === 403) {
+            router.replace("/");
+            return;
+          }
+          throw new Error("Failed to load stats");
+        }
+        setData((await res.json()) as StatsData);
+        setLastRefreshedAt(Date.now());
+        if (quiet) setError(null);
+      } catch (err) {
+        if (!quiet) {
+          setError(err instanceof Error ? err.message : "Failed to load");
+        }
+      } finally {
+        if (!quiet) setLoading(false);
+        else setStatsRefreshing(false);
+      }
+    },
+    [router, reportDays],
+  );
 
-  useEffect(() => { void fetchStats(); }, [fetchStats]);
+  useEffect(() => {
+    void fetchStats();
+  }, [fetchStats]);
+
+  useEffect(() => {
+    const tick = () => {
+      if (document.visibilityState === "hidden") return;
+      void fetchStats({ quiet: true });
+    };
+    const id = setInterval(tick, ADMIN_STATS_REFRESH_MS);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void fetchStats({ quiet: true });
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [fetchStats]);
 
   const loadLockServices = useCallback(async (refresh = false) => {
     setLockServicesLoading(true);
@@ -343,7 +415,7 @@ export default function AdminPage() {
       const json = (await res.json()) as { error?: string };
       if (!res.ok) { setEditError(json.error ?? "Save failed"); return; }
       setEditingId(null);
-      await fetchStats();
+      await fetchStats({ quiet: true });
     } catch {
       setEditError("Network error");
     } finally {
@@ -364,7 +436,7 @@ export default function AdminPage() {
       });
       const json = (await res.json()) as { error?: string };
       if (!res.ok) { setError(json.error ?? "Delete failed"); return; }
-      await fetchStats();
+      await fetchStats({ quiet: true });
     } catch {
       setError("Network error");
     } finally {
@@ -391,7 +463,7 @@ export default function AdminPage() {
       if (!res.ok) { setAddError(json.error ?? "Add failed"); return; }
       setNewUser({ username: "", password: "", role: "user" });
       setShowAddForm(false);
-      await fetchStats();
+      await fetchStats({ quiet: true });
     } catch {
       setAddError("Network error");
     } finally {
@@ -414,8 +486,20 @@ export default function AdminPage() {
           </div>
           <div className="flex items-center gap-2">
             <ThemeToggle />
-            <button onClick={() => void fetchStats()} className="btn btn-ghost btn-sm" disabled={loading} title="Refresh">
-              <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+            <span className="hidden text-xs text-base-content/45 sm:inline">
+              {lastRefreshedAt
+                ? `Updated ${formatTime(lastRefreshedAt)}`
+                : "Auto-refresh every 15s"}
+            </span>
+            <button
+              onClick={() => void fetchStats()}
+              className="btn btn-ghost btn-sm"
+              disabled={loading}
+              title="Refresh now"
+            >
+              <RefreshCw
+                className={`h-4 w-4 ${loading || statsRefreshing ? "animate-spin" : ""}`}
+              />
             </button>
             <button onClick={() => void handleLogout()} className="btn btn-ghost btn-sm text-error gap-1">
               <LogOut className="h-4 w-4" />
@@ -695,17 +779,38 @@ export default function AdminPage() {
           </div>
         </div>
 
-        {/* User Statistics */}
+        {/* Daily user report */}
         <div className="card border border-base-300 bg-base-100 shadow-none">
           <div className="card-body p-0">
-            <div className="flex items-center justify-between border-b border-base-300 px-5 py-4">
-              <h2 className="font-semibold">User Statistics</h2>
-              <span className="text-xs text-base-content/50">Only numbers that received SMS are counted</span>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-base-300 px-5 py-4">
+              <div>
+                <h2 className="font-semibold">Daily report</h2>
+                <p className="text-xs text-base-content/50 mt-0.5">
+                  Per worker, per day (UTC). Auto-refreshes every 15s.
+                  {lastRefreshedAt ? ` Last update: ${formatTime(lastRefreshedAt)}.` : ""}
+                </p>
+              </div>
+              <label className="flex items-center gap-2 text-sm">
+                <span className="text-base-content/60">Range</span>
+                <select
+                  className="select select-bordered select-sm"
+                  value={reportDays}
+                  disabled={loading}
+                  onChange={(e) => setReportDays(Number(e.target.value))}
+                >
+                  {REPORT_DAY_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
             <div className="overflow-x-auto">
               <table className="table table-zebra">
                 <thead>
                   <tr>
+                    <th>Date</th>
                     <th>Username</th>
                     <th className="text-center"><span className="flex items-center justify-center gap-1"><CheckCircle className="h-3.5 w-3.5 text-success" />SMS Received</span></th>
                     <th className="text-center"><span className="flex items-center justify-center gap-1"><XCircle className="h-3.5 w-3.5 text-warning" />Released (no SMS)</span></th>
@@ -713,19 +818,45 @@ export default function AdminPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {data?.stats.map((u) => (
-                    <tr key={u.userId}>
-                      <td className="font-medium">{u.username}</td>
-                      <td className="text-center"><span className={`badge badge-sm ${u.smsReceived > 0 ? "badge-success" : "badge-ghost"}`}>{u.smsReceived}</span></td>
-                      <td className="text-center"><span className={`badge badge-sm ${u.numbersReleased > 0 ? "badge-warning" : "badge-ghost"}`}>{u.numbersReleased}</span></td>
-                      <td className="text-center"><span className="badge badge-sm badge-info">{u.totalAssigned}</span></td>
+                  {data?.dailyStats.map((row) => (
+                    <tr key={`${row.date}-${row.userId}`}>
+                      <td className="whitespace-nowrap text-sm text-base-content/80">
+                        <span className="font-medium text-base-content">{formatReportDate(row.date)}</span>
+                        <span className="ml-1.5 text-xs text-base-content/40">{row.date}</span>
+                      </td>
+                      <td className="font-medium">{row.username}</td>
+                      <td className="text-center"><span className={`badge badge-sm ${row.smsReceived > 0 ? "badge-success" : "badge-ghost"}`}>{row.smsReceived}</span></td>
+                      <td className="text-center"><span className={`badge badge-sm ${row.numbersReleased > 0 ? "badge-warning" : "badge-ghost"}`}>{row.numbersReleased}</span></td>
+                      <td className="text-center"><span className="badge badge-sm badge-info">{row.totalAssigned}</span></td>
                     </tr>
                   ))}
-                  {!loading && data?.stats.length === 0 && (
-                    <tr><td colSpan={4} className="py-8 text-center text-base-content/40">No activity yet</td></tr>
+                  {!loading && (data?.dailyStats.length ?? 0) === 0 && (
+                    <tr><td colSpan={5} className="py-8 text-center text-base-content/40">No activity in this period</td></tr>
                   )}
-                  {loading && <tr><td colSpan={4} className="py-8 text-center text-base-content/40">Loading…</td></tr>}
+                  {loading && <tr><td colSpan={5} className="py-8 text-center text-base-content/40">Loading…</td></tr>}
                 </tbody>
+                {!loading && (data?.dailyStats.length ?? 0) > 0 && (
+                  <tfoot>
+                    <tr className="font-semibold border-t-2 border-base-300">
+                      <td colSpan={2}>Period total</td>
+                      <td className="text-center">
+                        <span className="badge badge-sm badge-success">
+                          {data!.dailyStats.reduce((s, r) => s + r.smsReceived, 0)}
+                        </span>
+                      </td>
+                      <td className="text-center">
+                        <span className="badge badge-sm badge-warning">
+                          {data!.dailyStats.reduce((s, r) => s + r.numbersReleased, 0)}
+                        </span>
+                      </td>
+                      <td className="text-center">
+                        <span className="badge badge-sm badge-info">
+                          {data!.dailyStats.reduce((s, r) => s + r.totalAssigned, 0)}
+                        </span>
+                      </td>
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </div>
           </div>
