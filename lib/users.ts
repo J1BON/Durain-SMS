@@ -32,7 +32,20 @@ function seedUsersFromEnv(): SiteUser[] | null {
   return [{ id: "admin", username, password, role: "admin" }];
 }
 
-/** Seed users on first deploy if table is empty. */
+/** Keep admin row in sync with SITE_AUTH_* on Render/local (runs every server start). */
+async function syncAdminFromEnv(): Promise<void> {
+  const envAdmin = seedUsersFromEnv();
+  if (!envAdmin) return;
+
+  const sb = getSupabase();
+  const admin = envAdmin[0];
+  const { error } = await sb.from("site_users").upsert(admin, { onConflict: "id" });
+  if (error) {
+    console.error("[users] sync admin from env failed:", error.message);
+  }
+}
+
+/** Seed users on first deploy if table is empty; then sync admin from env when set. */
 export async function initUsers(): Promise<void> {
   try {
     const sb = getSupabase();
@@ -43,6 +56,7 @@ export async function initUsers(): Promise<void> {
       const seeds = seedUsersFromEnv() ?? DEFAULT_USERS;
       await sb.from("site_users").insert(seeds);
     }
+    await syncAdminFromEnv();
   } catch (e) {
     console.error("[users] init failed:", e);
   }

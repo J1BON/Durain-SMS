@@ -48,12 +48,20 @@ This guide targets **[Render](https://render.com)** (free web service): `npm sta
    | **Start Command** | `npm start` |
    | **Plan** | Free |
 
-3. **Environment variables** (mirror your local `.env.local`):
+3. **Supabase** (multi-user login + admin dashboard)
+
+   1. Create a project at [supabase.com](https://supabase.com).
+   2. **SQL Editor** → run everything in [`supabase/schema.sql`](./supabase/schema.sql) (choose **Run without RLS** if prompted).
+   3. **Settings → API** → copy **Project URL** and the legacy **service_role** key (not the publishable/anon key).
+
+4. **Environment variables** (mirror your local `.env.local`):
 
    | Key | Required | Notes |
    |-----|----------|--------|
-   | `SITE_AUTH_USERNAME` | Yes | Who can open **your** site |
-   | `SITE_AUTH_PASSWORD` | Yes | |
+   | `SUPABASE_URL` | Yes | `https://YOUR-PROJECT.supabase.co` only — **no** `/rest/v1/` suffix |
+   | `SUPABASE_SERVICE_KEY` | Yes | Legacy **service_role** JWT (or full secret key from API settings) |
+   | `SITE_AUTH_USERNAME` | Recommended | Seeds/syncs the admin row in `site_users` on server start |
+   | `SITE_AUTH_PASSWORD` | Recommended | Must match what you use to sign in (stored in Supabase) |
    | `SITE_AUTH_SECRET` | Yes | Long random string (32+ chars); also used to seal **`/panel-refresh`** challenge cookies |
    | `DURIAN_USERNAME` | Yes | DurianRCS username |
    | `DURIAN_API_KEY` | Yes | Durian API key |
@@ -65,9 +73,9 @@ This guide targets **[Render](https://render.com)** (free web service): `npm sta
 
    \* On first boot you can leave `DURIAN_SESSION_COOKIE` empty, open the site, complete **`/panel-refresh`**, then set **`DURIAN_USE_DISK_PANEL_COOKIE=1`** and redeploy if you want that mode permanently.
 
-4. **Create Web Service**. First build/deploy takes a few minutes.
+5. **Create Web Service**. First build/deploy takes a few minutes.
 
-5. Open your URL → sign in with `SITE_AUTH_*` → if the service list is empty, tap **Sync services from Durian** (can take **1–2 min** on first sync).
+6. Open your URL → sign in with your admin username/password from Supabase (`site_users`, usually matching `SITE_AUTH_*` on Render) → if the service list is empty, tap **Sync services from Durian** (can take **1–2 min** on first sync). Admin dashboard: **`/admin`**.
 
 **Free tier:** The service **sleeps** after ~15 minutes idle. The first request after sleep can take **30–60 seconds**. A cron ping (below) reduces cold starts.
 

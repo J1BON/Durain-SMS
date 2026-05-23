@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Activity,
@@ -23,8 +23,11 @@ import {
   X,
   XCircle,
   Check,
+  ChevronDown,
+  Loader2,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { countryDisplayLabel, normalizeCountryCode } from "@/lib/country-list";
 
 interface UserStats {
   userId: string;
@@ -117,9 +120,14 @@ export default function AdminPage() {
   const [lockServices, setLockServices] = useState<ServiceItem[]>([]);
   const [lockCountries, setLockCountries] = useState<CountryItem[]>([]);
   const [lockServiceSearch, setLockServiceSearch] = useState("");
+  const [debouncedLockServiceSearch, setDebouncedLockServiceSearch] = useState("");
+  const [lockServicePickerOpen, setLockServicePickerOpen] = useState(false);
+  const [lockCountrySearch, setLockCountrySearch] = useState("");
   const [lockSelectedPid, setLockSelectedPid] = useState<number | null>(null);
   const [lockSelectedName, setLockSelectedName] = useState("");
   const [lockSelectedCountry, setLockSelectedCountry] = useState("");
+  const [lockServicesLoading, setLockServicesLoading] = useState(false);
+  const [lockSyncingServices, setLockSyncingServices] = useState(false);
   const [lockCountriesLoading, setLockCountriesLoading] = useState(false);
   const [lockSaving, setLockSaving] = useState(false);
   const [lockError, setLockError] = useState<string | null>(null);
@@ -144,33 +152,72 @@ export default function AdminPage() {
 
   useEffect(() => { void fetchStats(); }, [fetchStats]);
 
+  const loadLockServices = useCallback(async (refresh = false) => {
+    setLockServicesLoading(true);
+    try {
+      const url = refresh ? "/api/services?refresh=1" : "/api/services";
+      const res = await fetch(url);
+      const json = (await res.json()) as { services?: ServiceItem[]; error?: string };
+      if (!res.ok) throw new Error(json.error ?? "Failed to load services");
+      setLockServices(json.services ?? []);
+    } catch {
+      setLockServices([]);
+    } finally {
+      setLockServicesLoading(false);
+    }
+  }, []);
+
   // Load current lock + services on mount
   useEffect(() => {
     void (async () => {
       try {
-        const [settRes, svcRes] = await Promise.all([
-          fetch("/api/admin/settings"),
-          fetch("/api/services"),
-        ]);
+        const settRes = await fetch("/api/admin/settings");
         const settJson = (await settRes.json()) as { lock: LockedSetting | null };
-        const svcJson = (await svcRes.json()) as { services?: ServiceItem[] };
         setCurrentLock(settJson.lock ?? null);
-        setLockServices(svcJson.services ?? []);
       } catch {
         // non-fatal
       }
+      void loadLockServices();
     })();
-  }, []);
+  }, [loadLockServices]);
+
+  useEffect(() => {
+    const t = setTimeout(
+      () => setDebouncedLockServiceSearch(lockServiceSearch.trim().toLowerCase()),
+      200,
+    );
+    return () => clearTimeout(t);
+  }, [lockServiceSearch]);
+
+  const selectLockService = (svc: ServiceItem) => {
+    setLockSelectedPid(svc.pid);
+    setLockSelectedName(svc.name);
+    setLockServiceSearch("");
+    setDebouncedLockServiceSearch("");
+    setLockServicePickerOpen(false);
+    setLockCountrySearch("");
+  };
 
   // Load countries when a service is selected in the lock form
   useEffect(() => {
-    if (!lockSelectedPid) { setLockCountries([]); setLockSelectedCountry(""); return; }
+    if (!lockSelectedPid) {
+      setLockCountries([]);
+      setLockSelectedCountry("");
+      return;
+    }
     setLockCountriesLoading(true);
     fetch(`/api/countries?pid=${lockSelectedPid}`)
       .then((r) => r.json())
       .then((d: { countries?: CountryItem[] }) => {
-        setLockCountries(d.countries ?? []);
-        setLockSelectedCountry(d.countries?.[0]?.code ?? "");
+        const list = (d.countries ?? []).map((c) => ({
+          ...c,
+          code: normalizeCountryCode(c.code),
+        }));
+        setLockCountries(list);
+        setLockSelectedCountry((prev) => {
+          if (prev && list.some((c) => c.code === prev)) return prev;
+          return list[0]?.code ?? "";
+        });
       })
       .catch(() => setLockCountries([]))
       .finally(() => setLockCountriesLoading(false));
@@ -210,13 +257,56 @@ export default function AdminPage() {
     finally { setLockSaving(false); }
   };
 
-  const filteredLockServices = lockServiceSearch.trim()
-    ? lockServices.filter(
+  const lockServiceQuery = debouncedLockServiceSearch;
+
+  const filteredLockServices = useMemo(() => {
+    if (!lockServiceQuery) return [];
+    return lockServices
+      .filter(
         (s) =>
-          s.name.toLowerCase().includes(lockServiceSearch.toLowerCase()) ||
-          String(s.pid).includes(lockServiceSearch),
-      ).slice(0, 60)
-    : lockServices.slice(0, 60);
+          s.name.toLowerCase().includes(lockServiceQuery) ||
+          String(s.pid).includes(lockServiceQuery),
+      )
+      .slice(0, 100);
+  }, [lockServices, lockServiceQuery]);
+
+  const lockPickerServices = useMemo(() => {
+    if (lockServiceQuery) return filteredLockServices;
+    return lockServices.slice(0, 80);
+  }, [lockServiceQuery, filteredLockServices, lockServices]);
+
+  const showLockServicePicker =
+    lockServicePickerOpen ||
+    lockServiceSearch.trim().length > 0 ||
+    Boolean(lockServiceQuery);
+
+  const filteredLockCountries = useMemo(() => {
+    const q = lockCountrySearch.trim().toLowerCase();
+    if (!q) return lockCountries;
+    return lockCountries.filter((c) => {
+      const label = countryDisplayLabel(c).toLowerCase();
+      return c.code.toLowerCase().includes(q) || label.includes(q);
+    });
+  }, [lockCountries, lockCountrySearch]);
+
+  const openLockForm = () => {
+    setShowLockForm(true);
+    setLockError(null);
+    setLockServiceSearch("");
+    setDebouncedLockServiceSearch("");
+    setLockCountrySearch("");
+    setLockServicePickerOpen(false);
+    if (currentLock) {
+      setLockSelectedPid(currentLock.pid);
+      setLockSelectedName(currentLock.name);
+      setLockSelectedCountry(normalizeCountryCode(currentLock.country));
+    } else {
+      setLockSelectedPid(null);
+      setLockSelectedName("");
+      setLockSelectedCountry("");
+    }
+    if (lockServices.length === 0) void loadLockServices();
+  };
 
   useEffect(() => {
     if (showAddForm) setTimeout(() => addUsernameRef.current?.focus(), 50);
@@ -389,7 +479,14 @@ export default function AdminPage() {
                   </button>
                 )}
                 <button
-                  onClick={() => { setShowLockForm((v) => !v); setLockError(null); }}
+                  onClick={() => {
+                    if (showLockForm) {
+                      setShowLockForm(false);
+                      setLockError(null);
+                    } else {
+                      openLockForm();
+                    }
+                  }}
                   className="btn btn-primary btn-xs gap-1"
                 >
                   <Lock className="h-3 w-3" />
@@ -422,51 +519,160 @@ export default function AdminPage() {
               <div className="border-t border-base-300 bg-base-200/40 px-5 py-4 space-y-3">
                 <p className="text-sm font-medium">Pick service &amp; country to lock for all users</p>
 
-                {/* Service search */}
-                <div className="relative">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-base-content/40" />
-                  <input
-                    type="search"
-                    placeholder="Search service by name or ID…"
-                    className="input input-bordered input-sm w-full pl-9"
-                    value={lockServiceSearch}
-                    onChange={(e) => setLockServiceSearch(e.target.value)}
-                  />
+                {/* Service search + picker */}
+                <div>
+                  <label className="text-xs text-base-content/50 mb-1 block">Service</label>
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-base-content/40" />
+                    <input
+                      type="search"
+                      placeholder="Search by name or ID (e.g. Microsoft, 1234)…"
+                      className="input input-bordered input-sm w-full pl-9"
+                      value={lockServiceSearch}
+                      disabled={lockServicesLoading}
+                      onFocus={() => setLockServicePickerOpen(true)}
+                      onBlur={() => {
+                        setTimeout(() => setLockServicePickerOpen(false), 150);
+                      }}
+                      onChange={(e) => {
+                        setLockServiceSearch(e.target.value);
+                        setLockServicePickerOpen(true);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && filteredLockServices[0]) {
+                          e.preventDefault();
+                          selectLockService(filteredLockServices[0]);
+                        }
+                      }}
+                    />
+                  </div>
+                  {lockSelectedPid && lockSelectedName && !lockServiceSearch && (
+                    <p className="mt-1 text-xs text-base-content/70">
+                      Selected: <span className="font-medium">{lockSelectedName}</span>
+                      <span className="text-base-content/50"> · ID {lockSelectedPid}</span>
+                    </p>
+                  )}
+                  {lockServicesLoading && (
+                    <p className="mt-2 flex items-center gap-2 text-xs text-base-content/50">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      Loading services…
+                    </p>
+                  )}
+                  {!lockServicesLoading && lockServices.length === 0 && (
+                    <button
+                      type="button"
+                      className="btn btn-outline btn-xs mt-2 w-full"
+                      disabled={lockSyncingServices}
+                      onClick={() => {
+                        setLockSyncingServices(true);
+                        void loadLockServices(true).finally(() => setLockSyncingServices(false));
+                      }}
+                    >
+                      {lockSyncingServices ? (
+                        <>
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          Syncing…
+                        </>
+                      ) : (
+                        "Sync services from Durian"
+                      )}
+                    </button>
+                  )}
+                  {showLockServicePicker && !lockServicesLoading && lockServices.length > 0 && (
+                    <ul
+                      className="mt-2 max-h-48 overflow-y-auto rounded-lg border border-base-300 bg-base-100 shadow-sm"
+                      role="listbox"
+                      aria-label="Service search results"
+                    >
+                      {!lockServiceQuery && (
+                        <li className="border-b border-base-300 px-3 py-2 text-xs text-base-content/50">
+                          Type to search {lockServices.length} services, or pick from the list
+                        </li>
+                      )}
+                      {lockServiceQuery && filteredLockServices.length === 0 ? (
+                        <li className="px-3 py-3 text-sm text-base-content/50">
+                          No services match &ldquo;{lockServiceSearch.trim()}&rdquo;
+                        </li>
+                      ) : (
+                        lockPickerServices.map((s) => (
+                          <li key={s.pid} role="option" aria-selected={lockSelectedPid === s.pid}>
+                            <button
+                              type="button"
+                              className={`w-full px-3 py-2 text-left text-sm hover:bg-base-200 ${
+                                lockSelectedPid === s.pid ? "bg-primary/10" : ""
+                              }`}
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => selectLockService(s)}
+                            >
+                              <span className="font-medium">{s.name}</span>
+                              <span className="ml-2 text-xs text-base-content/50">
+                                ID {s.pid}
+                                {s.cost != null ? ` · ${s.cost} cr` : ""}
+                              </span>
+                            </button>
+                          </li>
+                        ))
+                      )}
+                      {lockServiceQuery && filteredLockServices.length > 100 && (
+                        <li className="border-t border-base-300 px-3 py-2 text-xs text-base-content/50">
+                          Showing 100 matches — refine your search
+                        </li>
+                      )}
+                    </ul>
+                  )}
                 </div>
-                <select
-                  className="select select-bordered select-sm w-full"
-                  value={lockSelectedPid ?? ""}
-                  onChange={(e) => {
-                    const pid = Number(e.target.value);
-                    const svc = lockServices.find((s) => s.pid === pid);
-                    setLockSelectedPid(pid || null);
-                    setLockSelectedName(svc?.name ?? "");
-                  }}
-                >
-                  <option value="">— Select service —</option>
-                  {filteredLockServices.map((s) => (
-                    <option key={s.pid} value={s.pid}>
-                      {s.name} · {s.pid}{s.cost != null ? ` · ${s.cost} cr` : ""}
-                    </option>
-                  ))}
-                </select>
 
-                {/* Country select */}
+                {/* Country search + select */}
                 {lockSelectedPid && (
-                  <select
-                    className="select select-bordered select-sm w-full"
-                    value={lockSelectedCountry}
-                    disabled={lockCountriesLoading || lockCountries.length === 0}
-                    onChange={(e) => setLockSelectedCountry(e.target.value)}
-                  >
-                    {lockCountriesLoading && <option value="">Loading countries…</option>}
-                    {!lockCountriesLoading && lockCountries.length === 0 && <option value="">No stock available</option>}
-                    {lockCountries.map((c) => (
-                      <option key={c.code} value={c.code}>
-                        {c.code.toUpperCase()} · {c.stock} in stock
-                      </option>
-                    ))}
-                  </select>
+                  <div>
+                    <label className="text-xs text-base-content/50 mb-1 block">Country</label>
+                    <div className="relative mb-2">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-base-content/40" />
+                      <input
+                        type="search"
+                        placeholder="Search country (e.g. us, USA, canada)…"
+                        className="input input-bordered input-sm w-full pl-9"
+                        value={lockCountrySearch}
+                        disabled={lockCountriesLoading || lockCountries.length === 0}
+                        onChange={(e) => setLockCountrySearch(e.target.value)}
+                      />
+                    </div>
+                    <div className="relative">
+                      <select
+                        className="select select-bordered select-sm w-full appearance-none pr-9"
+                        value={
+                          filteredLockCountries.some((c) => c.code === lockSelectedCountry)
+                            ? lockSelectedCountry
+                            : lockCountries.some((c) => c.code === lockSelectedCountry)
+                              ? lockSelectedCountry
+                              : ""
+                        }
+                        disabled={lockCountriesLoading || lockCountries.length === 0}
+                        onChange={(e) => setLockSelectedCountry(e.target.value)}
+                      >
+                        {lockCountriesLoading && <option value="">Loading countries…</option>}
+                        {!lockCountriesLoading && lockCountries.length === 0 && (
+                          <option value="">No stock available</option>
+                        )}
+                        {!lockCountriesLoading &&
+                          lockCountrySearch.trim() &&
+                          filteredLockCountries.length === 0 && (
+                            <option value="">No countries match your search</option>
+                          )}
+                        {filteredLockCountries.map((c) => (
+                          <option key={c.code} value={c.code}>
+                            {countryDisplayLabel(c)} · {c.stock} in stock
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-base-content/40" />
+                    </div>
+                    {lockCountrySearch.trim() && filteredLockCountries.length > 0 && (
+                      <p className="mt-1 text-xs text-base-content/50">
+                        {filteredLockCountries.length} of {lockCountries.length} countries match
+                      </p>
+                    )}
+                  </div>
                 )}
 
                 {lockError && <p className="text-xs text-error">{lockError}</p>}
