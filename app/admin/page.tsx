@@ -28,6 +28,11 @@ import {
 } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { countryDisplayLabel, normalizeCountryCode } from "@/lib/country-list";
+import {
+  formatDateKeyLongBd,
+  formatDateKeyShortBd,
+  formatDateTimeBd,
+} from "@/lib/format";
 
 interface UserStats {
   userId: string;
@@ -44,6 +49,8 @@ interface DailyUserStats {
   smsReceived: number;
   numbersReleased: number;
   totalAssigned: number;
+  /** Assigned but neither received SMS nor released yet */
+  inProgress?: number;
 }
 
 interface UserInfo {
@@ -96,22 +103,6 @@ interface EditState {
   username: string;
   password: string;
   role: string;
-}
-
-function formatTime(ts: number): string {
-  return new Date(ts).toLocaleString();
-}
-
-function formatReportDate(isoDate: string): string {
-  const [y, m, d] = isoDate.split("-").map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  return dt.toLocaleDateString(undefined, {
-    weekday: "short",
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  });
 }
 
 const REPORT_DAY_OPTIONS = [
@@ -488,7 +479,7 @@ export default function AdminPage() {
             <ThemeToggle />
             <span className="hidden text-xs text-base-content/45 sm:inline">
               {lastRefreshedAt
-                ? `Updated ${formatTime(lastRefreshedAt)}`
+                ? `Updated ${formatDateTimeBd(lastRefreshedAt)}`
                 : "Auto-refresh every 15s"}
             </span>
             <button
@@ -786,8 +777,9 @@ export default function AdminPage() {
               <div>
                 <h2 className="font-semibold">Daily report</h2>
                 <p className="text-xs text-base-content/50 mt-0.5">
-                  Per worker, per day (UTC). Auto-refreshes every 15s.
-                  {lastRefreshedAt ? ` Last update: ${formatTime(lastRefreshedAt)}.` : ""}
+                  Per worker, per day (Bangladesh time). Total = SMS received + released (no SMS) + still waiting.
+                  Auto-refreshes every 15s.
+                  {lastRefreshedAt ? ` Last update: ${formatDateTimeBd(lastRefreshedAt)}.` : ""}
                 </p>
               </div>
               <label className="flex items-center gap-2 text-sm">
@@ -814,26 +806,33 @@ export default function AdminPage() {
                     <th>Username</th>
                     <th className="text-center"><span className="flex items-center justify-center gap-1"><CheckCircle className="h-3.5 w-3.5 text-success" />SMS Received</span></th>
                     <th className="text-center"><span className="flex items-center justify-center gap-1"><XCircle className="h-3.5 w-3.5 text-warning" />Released (no SMS)</span></th>
+                    <th className="text-center">Waiting</th>
                     <th className="text-center"><span className="flex items-center justify-center gap-1"><Phone className="h-3.5 w-3.5 text-info" />Total Numbers</span></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {data?.dailyStats.map((row) => (
+                  {data?.dailyStats.map((row) => {
+                    const waiting =
+                      row.inProgress ??
+                      Math.max(0, row.totalAssigned - row.smsReceived - row.numbersReleased);
+                    return (
                     <tr key={`${row.date}-${row.userId}`}>
                       <td className="whitespace-nowrap text-sm text-base-content/80">
-                        <span className="font-medium text-base-content">{formatReportDate(row.date)}</span>
-                        <span className="ml-1.5 text-xs text-base-content/40">{row.date}</span>
+                        <span className="font-medium text-base-content">{formatDateKeyLongBd(row.date)}</span>
+                        <span className="ml-1.5 text-xs text-base-content/40">{formatDateKeyShortBd(row.date)}</span>
                       </td>
                       <td className="font-medium">{row.username}</td>
                       <td className="text-center"><span className={`badge badge-sm ${row.smsReceived > 0 ? "badge-success" : "badge-ghost"}`}>{row.smsReceived}</span></td>
                       <td className="text-center"><span className={`badge badge-sm ${row.numbersReleased > 0 ? "badge-warning" : "badge-ghost"}`}>{row.numbersReleased}</span></td>
+                      <td className="text-center"><span className={`badge badge-sm ${waiting > 0 ? "badge-ghost" : "badge-ghost opacity-40"}`}>{waiting}</span></td>
                       <td className="text-center"><span className="badge badge-sm badge-info">{row.totalAssigned}</span></td>
                     </tr>
-                  ))}
+                    );
+                  })}
                   {!loading && (data?.dailyStats.length ?? 0) === 0 && (
-                    <tr><td colSpan={5} className="py-8 text-center text-base-content/40">No activity in this period</td></tr>
+                    <tr><td colSpan={6} className="py-8 text-center text-base-content/40">No activity in this period</td></tr>
                   )}
-                  {loading && <tr><td colSpan={5} className="py-8 text-center text-base-content/40">Loading…</td></tr>}
+                  {loading && <tr><td colSpan={6} className="py-8 text-center text-base-content/40">Loading…</td></tr>}
                 </tbody>
                 {!loading && (data?.dailyStats.length ?? 0) > 0 && (
                   <tfoot>
@@ -847,6 +846,17 @@ export default function AdminPage() {
                       <td className="text-center">
                         <span className="badge badge-sm badge-warning">
                           {data!.dailyStats.reduce((s, r) => s + r.numbersReleased, 0)}
+                        </span>
+                      </td>
+                      <td className="text-center">
+                        <span className="badge badge-sm badge-ghost">
+                          {data!.dailyStats.reduce(
+                            (s, r) =>
+                              s +
+                              (r.inProgress ??
+                                Math.max(0, r.totalAssigned - r.smsReceived - r.numbersReleased)),
+                            0,
+                          )}
                         </span>
                       </td>
                       <td className="text-center">
@@ -1071,7 +1081,7 @@ export default function AdminPage() {
                 <tbody>
                   {data?.recent.map((e) => (
                     <tr key={e.id}>
-                      <td className="whitespace-nowrap text-xs text-base-content/50">{formatTime(e.assignedAt)}</td>
+                      <td className="whitespace-nowrap text-xs text-base-content/50">{formatDateTimeBd(e.assignedAt)}</td>
                       <td className="font-medium">{e.username}</td>
                       <td className="font-mono text-xs">{e.phoneNumber}</td>
                       <td className="text-xs uppercase">{e.country}</td>

@@ -1,6 +1,6 @@
 # Durain SMS
 
-A mobile-friendly web app for **DurianRCS** — search 2,600+ services by name, pick a country, get a number, and receive SMS verification codes. Balance, countries, and stock sync live from Durian. Copying a US number uses **national format** (e.g. `(317) 799-3900`) while the screen can still show `+1 …`.
+A mobile-friendly web app for **DurianRCS** — search 2,600+ services by name, pick a country, get a number, and receive SMS verification codes. Balance, countries, and stock sync live from Durian. US/CA numbers copy as **+1 (337) 998-9135**.
 
 ---
 
@@ -253,7 +253,7 @@ You should see the **new account’s balance** and full service list.
 2. **Search** a service by name (e.g. Microsoft, Rips).
 3. Pick **country** (**USA** is listed first when that row exists).
 4. Optional: **Secret key**, **Single / Multiple** message mode.
-5. Tap **Get Number** → copy phone / wait for SMS code (copy uses **national** format for US/CA, e.g. `(317) 799-3900`).
+5. Tap **Get Number** → copy phone / wait for SMS code (US/CA copies as **+1 (317) 799-3900**).
 6. **Balance** updates automatically from Durian.
 
 **Dark / light mode:** Use the moon/sun button (top-left on home, top-right on login).

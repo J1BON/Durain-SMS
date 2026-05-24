@@ -1,3 +1,4 @@
+import { dateKeyInBangladesh } from "./format";
 import { getSupabase } from "./supabase";
 
 export interface TrackingEntry {
@@ -29,11 +30,67 @@ export interface DailyUserStats {
   smsReceived: number;
   numbersReleased: number;
   totalAssigned: number;
+  /** Assigned but neither received SMS nor released yet */
+  inProgress: number;
 }
 
-/** Calendar day (UTC) from assignment timestamp. */
+/** Calendar day (Bangladesh / Asia/Dhaka) from assignment timestamp. */
 export function dateKeyFromAssignedAt(assignedAt: number): string {
-  return new Date(assignedAt).toISOString().slice(0, 10);
+  return dateKeyInBangladesh(assignedAt);
+}
+
+/** PostgREST returns at most 1000 rows per request — paginate for accurate stats. */
+const TRACKING_PAGE_SIZE = 1000;
+
+type TrackingStatRow = {
+  user_id: string;
+  assigned_at: number;
+  received_sms: boolean;
+  released: boolean;
+};
+
+async function fetchAllTrackingStatRows(options?: {
+  since?: number;
+}): Promise<TrackingStatRow[]> {
+  const sb = getSupabase();
+  const rows: TrackingStatRow[] = [];
+  let offset = 0;
+
+  for (;;) {
+    let query = sb
+      .from("sms_tracking")
+      .select("user_id, assigned_at, received_sms, released")
+      .order("assigned_at", { ascending: true })
+      .range(offset, offset + TRACKING_PAGE_SIZE - 1);
+
+    if (options?.since != null) {
+      query = query.gte("assigned_at", options.since);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    const page = (data ?? []) as TrackingStatRow[];
+    rows.push(...page);
+    if (page.length < TRACKING_PAGE_SIZE) break;
+    offset += TRACKING_PAGE_SIZE;
+  }
+
+  return rows;
+}
+
+function applyTrackingRowToDailyBucket(
+  entry: DailyUserStats,
+  row: TrackingStatRow,
+): void {
+  entry.totalAssigned += 1;
+  if (row.received_sms) {
+    entry.smsReceived += 1;
+  } else if (row.released) {
+    entry.numbersReleased += 1;
+  } else {
+    entry.inProgress += 1;
+  }
 }
 
 type DbRow = {
@@ -145,16 +202,12 @@ export async function getDailyUsersStats(
 ): Promise<DailyUserStats[]> {
   const days = Math.min(365, Math.max(1, options?.days ?? 30));
   const since = Date.now() - days * 24 * 60 * 60 * 1000;
-  const sb = getSupabase();
-  const { data } = await sb
-    .from("sms_tracking")
-    .select("user_id, assigned_at, received_sms, released")
-    .gte("assigned_at", since);
+  const rows = await fetchAllTrackingStatRows({ since });
 
   const userMap = new Map(userList.map((u) => [u.id, u.username]));
   const buckets = new Map<string, DailyUserStats>();
 
-  for (const row of data ?? []) {
+  for (const row of rows) {
     if (!userMap.has(row.user_id)) continue;
     const date = dateKeyFromAssignedAt(row.assigned_at);
     const bucketKey = `${date}\0${row.user_id}`;
@@ -167,12 +220,11 @@ export async function getDailyUsersStats(
         smsReceived: 0,
         numbersReleased: 0,
         totalAssigned: 0,
+        inProgress: 0,
       };
       buckets.set(bucketKey, entry);
     }
-    entry.totalAssigned += 1;
-    if (row.received_sms) entry.smsReceived += 1;
-    else if (row.released) entry.numbersReleased += 1;
+    applyTrackingRowToDailyBucket(entry, row);
   }
 
   return [...buckets.values()].sort((a, b) => {
@@ -184,11 +236,7 @@ export async function getDailyUsersStats(
 export async function getAllUsersStats(
   userList: { id: string; username: string }[],
 ): Promise<UserStats[]> {
-  const sb = getSupabase();
-  const { data } = await sb
-    .from("sms_tracking")
-    .select("user_id, received_sms, released");
-  const rows = data ?? [];
+  const rows = await fetchAllTrackingStatRows();
   return userList.map((u) => {
     const mine = rows.filter((r) => r.user_id === u.id);
     return {

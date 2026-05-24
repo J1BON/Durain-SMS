@@ -3,6 +3,55 @@ export function digitsOnly(value: string): string {
   return value.replace(/\D/g, "");
 }
 
+/** Bangladesh locale and timezone (BST, UTC+6). */
+export const BD_LOCALE = "en-BD";
+export const BD_TIME_ZONE = "Asia/Dhaka";
+
+const bdDateTimeFmt = new Intl.DateTimeFormat(BD_LOCALE, {
+  timeZone: BD_TIME_ZONE,
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: true,
+});
+
+const bdDateLongFmt = new Intl.DateTimeFormat(BD_LOCALE, {
+  timeZone: BD_TIME_ZONE,
+  weekday: "short",
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+});
+
+/** Calendar day key YYYY-MM-DD in Bangladesh time (for daily stats buckets). */
+export function dateKeyInBangladesh(assignedAt: number): string {
+  return new Date(assignedAt).toLocaleDateString("en-CA", {
+    timeZone: BD_TIME_ZONE,
+  });
+}
+
+/** Date + time, e.g. 24/05/2026, 11:27:26 pm */
+export function formatDateTimeBd(ts: number): string {
+  return bdDateTimeFmt.format(new Date(ts));
+}
+
+/** Long date from YYYY-MM-DD key, e.g. Sat, 24 May 2026 */
+export function formatDateKeyLongBd(isoDate: string): string {
+  const [y, m, d] = isoDate.split("-").map(Number);
+  if (!y || !m || !d) return isoDate;
+  return bdDateLongFmt.format(new Date(Date.UTC(y, m - 1, d, 12, 0, 0)));
+}
+
+/** Short date from YYYY-MM-DD key, e.g. 24/05/2026 */
+export function formatDateKeyShortBd(isoDate: string): string {
+  const [y, m, d] = isoDate.split("-");
+  if (!y || !m || !d) return isoDate;
+  return `${d.padStart(2, "0")}/${m.padStart(2, "0")}/${y}`;
+}
+
 /**
  * Canonical E.164-ish value for Durian ext_api query params (`pn`, etc.).
  * Accepts numbers the UI may show with spaces or parentheses.
@@ -26,8 +75,7 @@ export function phoneForDurianExtApi(
 }
 
 /**
- * National-format phone for clipboard (no country code).
- * US/CA: (317) 799-3900 — display may still show +1 (317) 799-3900.
+ * Phone string for clipboard — US/CA includes +1, e.g. +1 (337) 998-9135.
  */
 export function phoneCopyValue(phone: string): string {
   const raw = phone.trim();
@@ -36,21 +84,19 @@ export function phoneCopyValue(phone: string): string {
 
   if (d.length === 11 && d.startsWith("1")) {
     const n = d.slice(1);
-    return `(${n.slice(0, 3)}) ${n.slice(3, 6)}-${n.slice(6)}`;
+    return `+1 (${n.slice(0, 3)}) ${n.slice(3, 6)}-${n.slice(6)}`;
   }
 
   if (d.length === 10) {
-    return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
+    return `+1 (${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
   }
 
-  const display = formatPhoneDisplay(raw);
-  const withoutCountry = display.replace(/^\+\d{1,3}\s+/, "");
-  return withoutCountry || display;
+  return formatPhoneDisplay(raw);
 }
 
 /**
  * Human-readable phone display.
- * US/CA: +1 (209) 200-3261 · 10-digit: (209) 200-3261
+ * US/CA: +1 (209) 200-3261
  */
 export function formatPhoneDisplay(phone: string): string {
   const raw = phone.trim();
@@ -63,7 +109,7 @@ export function formatPhoneDisplay(phone: string): string {
   }
 
   if (d.length === 10) {
-    return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
+    return `+1 (${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
   }
 
   if (d.length === 12 && d.startsWith("44")) {
@@ -122,12 +168,12 @@ export function smsCodeCopyValue(code: string): string {
 }
 
 export function formatCredits(n: number): string {
-  return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return n.toLocaleString(BD_LOCALE, { maximumFractionDigits: 0 });
 }
 
 export function formatStock(stock: number): string {
   if (stock >= 10_000) return `${Math.round(stock / 1000)}k`;
-  return stock.toLocaleString();
+  return stock.toLocaleString(BD_LOCALE);
 }
 
 export function formatCountdown(seconds: number): string {
