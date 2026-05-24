@@ -1,10 +1,21 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useRouter } from "next/navigation";
 import {
   Activity,
+  Calendar,
   CheckCircle,
+  Clock,
+  Timer,
+  RotateCcw,
   Eye,
   EyeOff,
   Lock,
@@ -33,6 +44,7 @@ import {
   formatDateKeyShortBd,
   formatDateTimeBd,
 } from "@/lib/format";
+import { periodStatusMessage, type StatsPeriod } from "@/lib/stats-period";
 
 interface UserStats {
   userId: string;
@@ -77,7 +89,8 @@ interface StatsData {
   users: UserInfo[];
   stats: UserStats[];
   dailyStats: DailyUserStats[];
-  reportDays: number;
+  period: StatsPeriod;
+  statsResetAt: number | null;
   recent: RecentEntry[];
 }
 
@@ -105,14 +118,7 @@ interface EditState {
   role: string;
 }
 
-const REPORT_DAY_OPTIONS = [
-  { value: 1, label: "Today" },
-  { value: 7, label: "Last 7 days" },
-  { value: 30, label: "Last 30 days" },
-  { value: 90, label: "Last 90 days" },
-] as const;
-
-/** Auto-refresh daily report + recent activity while admin tab is open. */
+/** Auto-refresh stats while admin tab is open (reset counter stays manual). */
 const ADMIN_STATS_REFRESH_MS = 15_000;
 
 export default function AdminPage() {
@@ -156,7 +162,9 @@ export default function AdminPage() {
   const [lockSaving, setLockSaving] = useState(false);
   const [lockError, setLockError] = useState<string | null>(null);
   const [showLockForm, setShowLockForm] = useState(false);
-  const [reportDays, setReportDays] = useState(30);
+  const [period, setPeriod] = useState<StatsPeriod>("today");
+  const [statsResetAt, setStatsResetAt] = useState<number | null>(null);
+  const [resettingCounter, setResettingCounter] = useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<number | null>(null);
   const [statsRefreshing, setStatsRefreshing] = useState(false);
 
@@ -170,7 +178,7 @@ export default function AdminPage() {
         setStatsRefreshing(true);
       }
       try {
-        const res = await fetch(`/api/admin/stats?days=${reportDays}`, {
+        const res = await fetch(`/api/admin/stats?period=${period}`, {
           cache: "no-store",
         });
         if (!res.ok) {
@@ -180,7 +188,9 @@ export default function AdminPage() {
           }
           throw new Error("Failed to load stats");
         }
-        setData((await res.json()) as StatsData);
+        const json = (await res.json()) as StatsData;
+        setData(json);
+        setStatsResetAt(json.statsResetAt ?? null);
         setLastRefreshedAt(Date.now());
         if (quiet) setError(null);
       } catch (err) {
@@ -192,7 +202,40 @@ export default function AdminPage() {
         else setStatsRefreshing(false);
       }
     },
-    [router, reportDays],
+    [router, period],
+  );
+
+  const handleResetCounter = async () => {
+    setResettingCounter(true);
+    try {
+      const res = await fetch("/api/admin/stats/reset", { method: "POST" });
+      if (!res.ok) throw new Error("Reset failed");
+      const json = (await res.json()) as { statsResetAt: number };
+      setStatsResetAt(json.statsResetAt);
+      await fetchStats({ quiet: true });
+    } catch {
+      setError("Could not reset counter");
+    } finally {
+      setResettingCounter(false);
+    }
+  };
+
+  const periodButtons: {
+    id: StatsPeriod;
+    label: string;
+    icon: ReactNode;
+  }[] = useMemo(
+    () => [
+      { id: "1h", label: "1 Hour", icon: <Clock className="h-3.5 w-3.5" /> },
+      { id: "today", label: "Today", icon: <Calendar className="h-3.5 w-3.5" /> },
+      {
+        id: "since_reset",
+        label: "Since Reset",
+        icon: <RotateCcw className="h-3.5 w-3.5" />,
+      },
+      { id: "all", label: "All Time", icon: <Activity className="h-3.5 w-3.5" /> },
+    ],
+    [],
   );
 
   useEffect(() => {
@@ -528,6 +571,141 @@ export default function AdminPage() {
           ))}
         </div>
 
+        {/* Period filter + reset counter */}
+        <div className="card border border-base-300 bg-base-100 shadow-none">
+          <div className="card-body gap-4 p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <Timer className="h-4 w-4 text-base-content/50" />
+                Period:
+              </div>
+              <button
+                type="button"
+                className="btn btn-outline btn-sm gap-1.5"
+                disabled={resettingCounter || loading}
+                onClick={() => void handleResetCounter()}
+              >
+                {resettingCounter ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <RotateCcw className="h-3.5 w-3.5" />
+                )}
+                Reset Counter
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {periodButtons.map((btn) => (
+                <button
+                  key={btn.id}
+                  type="button"
+                  className={`btn btn-sm gap-1.5 ${
+                    period === btn.id ? "btn-neutral text-neutral-content" : "btn-outline"
+                  }`}
+                  disabled={loading}
+                  onClick={() => setPeriod(btn.id)}
+                >
+                  {btn.icon}
+                  {btn.label}
+                </button>
+              ))}
+            </div>
+            <p className="rounded-lg bg-base-200/80 px-3 py-2 text-xs text-base-content/60">
+              {periodStatusMessage(period, statsResetAt)}
+            </p>
+          </div>
+        </div>
+
+        {/* User statistics (selected period) */}
+        <div className="card border border-base-300 bg-base-100 shadow-none">
+          <div className="card-body p-0">
+            <div className="border-b border-base-300 px-5 py-4">
+              <h2 className="font-semibold">User statistics</h2>
+              <p className="text-xs text-base-content/50 mt-0.5">
+                Totals for the selected period · auto-refreshes every 15s
+              </p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="table table-zebra">
+                <thead>
+                  <tr>
+                    <th>Username</th>
+                    <th className="text-center">
+                      <span className="flex items-center justify-center gap-1">
+                        <CheckCircle className="h-3.5 w-3.5 text-success" />
+                        SMS Received
+                      </span>
+                    </th>
+                    <th className="text-center">
+                      <span className="flex items-center justify-center gap-1">
+                        <XCircle className="h-3.5 w-3.5 text-warning" />
+                        Released (no SMS)
+                      </span>
+                    </th>
+                    <th className="text-center">Waiting</th>
+                    <th className="text-center">
+                      <span className="flex items-center justify-center gap-1">
+                        <Phone className="h-3.5 w-3.5 text-info" />
+                        Total Numbers
+                      </span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data?.stats.map((u) => {
+                    const waiting = Math.max(
+                      0,
+                      u.totalAssigned - u.smsReceived - u.numbersReleased,
+                    );
+                    return (
+                      <tr key={u.userId}>
+                        <td className="font-medium">{u.username}</td>
+                        <td className="text-center">
+                          <span
+                            className={`badge badge-sm ${u.smsReceived > 0 ? "badge-success" : "badge-ghost"}`}
+                          >
+                            {u.smsReceived}
+                          </span>
+                        </td>
+                        <td className="text-center">
+                          <span
+                            className={`badge badge-sm ${u.numbersReleased > 0 ? "badge-warning" : "badge-ghost"}`}
+                          >
+                            {u.numbersReleased}
+                          </span>
+                        </td>
+                        <td className="text-center">
+                          <span
+                            className={`badge badge-sm ${waiting > 0 ? "badge-ghost" : "badge-ghost opacity-40"}`}
+                          >
+                            {waiting}
+                          </span>
+                        </td>
+                        <td className="text-center">
+                          <span className="badge badge-sm badge-info">{u.totalAssigned}</span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {!loading && (data?.stats.length ?? 0) === 0 && (
+                    <tr>
+                      <td colSpan={5} className="py-8 text-center text-base-content/40">
+                        No activity in this period
+                      </td>
+                    </tr>
+                  )}
+                  {loading && (
+                    <tr>
+                      <td colSpan={5} className="py-8 text-center text-base-content/40">
+                        Loading…
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
         {/* Default Service & Country Lock */}
         <div className="card border border-base-300 bg-base-100 shadow-none">
           <div className="card-body p-0">
@@ -770,33 +948,16 @@ export default function AdminPage() {
           </div>
         </div>
 
-        {/* Daily user report */}
+        {/* Daily user report (all time — last 30 days by day) */}
+        {period === "all" && (
         <div className="card border border-base-300 bg-base-100 shadow-none">
           <div className="card-body p-0">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-base-300 px-5 py-4">
-              <div>
-                <h2 className="font-semibold">Daily report</h2>
-                <p className="text-xs text-base-content/50 mt-0.5">
-                  Per worker, per day (Bangladesh time). Total = SMS received + released (no SMS) + still waiting.
-                  Auto-refreshes every 15s.
-                  {lastRefreshedAt ? ` Last update: ${formatDateTimeBd(lastRefreshedAt)}.` : ""}
-                </p>
-              </div>
-              <label className="flex items-center gap-2 text-sm">
-                <span className="text-base-content/60">Range</span>
-                <select
-                  className="select select-bordered select-sm"
-                  value={reportDays}
-                  disabled={loading}
-                  onChange={(e) => setReportDays(Number(e.target.value))}
-                >
-                  {REPORT_DAY_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
+            <div className="border-b border-base-300 px-5 py-4">
+              <h2 className="font-semibold">Daily report</h2>
+              <p className="text-xs text-base-content/50 mt-0.5">
+                Per worker, per day (Bangladesh time) · last 30 days
+                {lastRefreshedAt ? ` · updated ${formatDateTimeBd(lastRefreshedAt)}` : ""}
+              </p>
             </div>
             <div className="overflow-x-auto">
               <table className="table table-zebra">
@@ -871,6 +1032,7 @@ export default function AdminPage() {
             </div>
           </div>
         </div>
+        )}
 
         {/* User Management */}
         <div className="card border border-base-300 bg-base-100 shadow-none">

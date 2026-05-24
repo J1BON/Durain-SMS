@@ -198,10 +198,11 @@ export async function recordNumberReleased(
 
 export async function getDailyUsersStats(
   userList: { id: string; username: string }[],
-  options?: { days?: number },
+  options?: { days?: number; since?: number },
 ): Promise<DailyUserStats[]> {
-  const days = Math.min(365, Math.max(1, options?.days ?? 30));
-  const since = Date.now() - days * 24 * 60 * 60 * 1000;
+  const since =
+    options?.since ??
+    Date.now() - Math.min(365, Math.max(1, options?.days ?? 30)) * 24 * 60 * 60 * 1000;
   const rows = await fetchAllTrackingStatRows({ since });
 
   const userMap = new Map(userList.map((u) => [u.id, u.username]));
@@ -235,8 +236,11 @@ export async function getDailyUsersStats(
 
 export async function getAllUsersStats(
   userList: { id: string; username: string }[],
+  options?: { since?: number },
 ): Promise<UserStats[]> {
-  const rows = await fetchAllTrackingStatRows();
+  const rows = await fetchAllTrackingStatRows(
+    options?.since != null ? { since: options.since } : {},
+  );
   return userList.map((u) => {
     const mine = rows.filter((r) => r.user_id === u.id);
     return {
@@ -249,12 +253,19 @@ export async function getAllUsersStats(
   });
 }
 
-export async function getRecentActivity(limit = 100): Promise<TrackingEntry[]> {
+export async function getRecentActivity(
+  limit = 100,
+  since?: number,
+): Promise<TrackingEntry[]> {
   const sb = getSupabase();
-  const { data } = await sb
+  let query = sb
     .from("sms_tracking")
     .select("*")
     .order("assigned_at", { ascending: false })
     .limit(limit);
+  if (since != null) {
+    query = query.gte("assigned_at", since);
+  }
+  const { data } = await query;
   return ((data ?? []) as DbRow[]).map(fromRow);
 }

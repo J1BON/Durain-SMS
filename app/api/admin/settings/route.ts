@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { verifySessionCookieValue, SESSION_COOKIE } from "@/lib/site-auth";
-import { getSettings, saveSettings, type LockedSetting } from "@/lib/site-settings";
+import { getSettings, saveLock, type LockedSetting } from "@/lib/site-settings";
 
 async function requireAdmin() {
   const jar = await cookies();
@@ -35,6 +35,6 @@ export async function PUT(request: NextRequest) {
     }
   }
 
-  await saveSettings({ lock: body.lock ?? null });
+  await saveLock(body.lock ?? null);
   return NextResponse.json({ ok: true });
 }
