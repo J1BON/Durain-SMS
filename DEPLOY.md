@@ -24,7 +24,7 @@ flowchart LR
 
 **Features after setup:**
 
-- Multi-user login (1 admin + up to 10 workers)
+- Multi-user login (1 admin + up to 30 workers)
 - Admin dashboard at `/admin` (stats, user management, lock service/country for everyone)
 - Service search (~2,600+ names from Durian web panel)
 - Optional cron to wake the server and refresh the catalog
@@ -260,7 +260,7 @@ Paste the printed line into Render as **`DURIAN_SESSION_COOKIE`**.
 
 1. Sign in as **admin** → `/admin`.
 2. **User Management** → add users (role **user**).
-3. Maximum **10 worker** accounts; unlimited admins if you add more admin rows manually in Supabase.
+3. Maximum **30 worker** accounts; unlimited admins if you add more admin rows manually in Supabase.
 
 Share with each worker:
 

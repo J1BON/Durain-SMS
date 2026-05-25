@@ -1,3 +1,4 @@
+import { MAX_WORKER_ACCOUNTS } from "./constants";
 import { getSupabase } from "./supabase";
 
 export type UserRole = "user" | "admin";
@@ -9,7 +10,7 @@ export interface SiteUser {
   role: UserRole;
 }
 
-export const MAX_WORKER_ACCOUNTS = 10;
+export { MAX_WORKER_ACCOUNTS };
 
 const DEFAULT_USERS: SiteUser[] = [
   { id: "admin", username: "admin", password: "Admin@2024", role: "admin" },

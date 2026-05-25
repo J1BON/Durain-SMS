@@ -72,7 +72,7 @@ Optional: set `SITE_AUTH_USERNAME` and `SITE_AUTH_PASSWORD` to seed **one admin*
 
 **Important:** Never commit `.env.local` to Git. It is already in `.gitignore`.
 
-On first start, the app seeds accounts into Supabase (1 admin + up to 10 workers if using defaults). Change passwords in **Admin → User Management**.
+On first start, the app seeds accounts into Supabase (1 admin + up to 30 workers if using defaults). Change passwords in **Admin → User Management**.
 
 ---
 

@@ -45,6 +45,23 @@ import {
   formatDateTimeBd,
 } from "@/lib/format";
 import { periodStatusMessage, type StatsPeriod } from "@/lib/stats-period";
+import { MAX_WORKER_ACCOUNTS } from "@/lib/constants";
+
+function dailyRowWaiting(row: DailyUserStats): number {
+  return (
+    row.inProgress ??
+    Math.max(0, row.totalAssigned - row.smsReceived - row.numbersReleased)
+  );
+}
+
+function sumDailyRows(rows: DailyUserStats[]) {
+  return {
+    smsReceived: rows.reduce((s, r) => s + r.smsReceived, 0),
+    numbersReleased: rows.reduce((s, r) => s + r.numbersReleased, 0),
+    waiting: rows.reduce((s, r) => s + dailyRowWaiting(r), 0),
+    totalAssigned: rows.reduce((s, r) => s + r.totalAssigned, 0),
+  };
+}
 
 interface UserStats {
   userId: string;
@@ -509,6 +526,23 @@ export default function AdminPage() {
   const totalReleased = data?.stats.reduce((s, u) => s + u.numbersReleased, 0) ?? 0;
   const totalAssigned = data?.stats.reduce((s, u) => s + u.totalAssigned, 0) ?? 0;
 
+  const workerCount = data?.users.filter((u) => u.role === "user").length ?? 0;
+
+  const dailyStatsByDate = useMemo(() => {
+    const groups: { date: string; rows: DailyUserStats[] }[] = [];
+    for (const row of data?.dailyStats ?? []) {
+      const last = groups[groups.length - 1];
+      if (last?.date === row.date) last.rows.push(row);
+      else groups.push({ date: row.date, rows: [row] });
+    }
+    return groups;
+  }, [data?.dailyStats]);
+
+  const dailyGrandTotals = useMemo(
+    () => sumDailyRows(data?.dailyStats ?? []),
+    [data?.dailyStats],
+  );
+
   return (
     <div className="min-h-dvh bg-base-200/40">
       {/* Header */}
@@ -955,81 +989,134 @@ export default function AdminPage() {
             <div className="border-b border-base-300 px-5 py-4">
               <h2 className="font-semibold">Daily report</h2>
               <p className="text-xs text-base-content/50 mt-0.5">
-                Per worker, per day (Bangladesh time) · last 30 days
+                Grouped by day (Bangladesh time) · last 30 days
                 {lastRefreshedAt ? ` · updated ${formatDateTimeBd(lastRefreshedAt)}` : ""}
               </p>
             </div>
-            <div className="overflow-x-auto">
-              <table className="table table-zebra">
-                <thead>
-                  <tr>
-                    <th>Date</th>
-                    <th>Username</th>
-                    <th className="text-center"><span className="flex items-center justify-center gap-1"><CheckCircle className="h-3.5 w-3.5 text-success" />SMS Received</span></th>
-                    <th className="text-center"><span className="flex items-center justify-center gap-1"><XCircle className="h-3.5 w-3.5 text-warning" />Released (no SMS)</span></th>
-                    <th className="text-center">Waiting</th>
-                    <th className="text-center"><span className="flex items-center justify-center gap-1"><Phone className="h-3.5 w-3.5 text-info" />Total Numbers</span></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data?.dailyStats.map((row) => {
-                    const waiting =
-                      row.inProgress ??
-                      Math.max(0, row.totalAssigned - row.smsReceived - row.numbersReleased);
-                    return (
-                    <tr key={`${row.date}-${row.userId}`}>
-                      <td className="whitespace-nowrap text-sm text-base-content/80">
-                        <span className="font-medium text-base-content">{formatDateKeyLongBd(row.date)}</span>
-                        <span className="ml-1.5 text-xs text-base-content/40">{formatDateKeyShortBd(row.date)}</span>
-                      </td>
-                      <td className="font-medium">{row.username}</td>
-                      <td className="text-center"><span className={`badge badge-sm ${row.smsReceived > 0 ? "badge-success" : "badge-ghost"}`}>{row.smsReceived}</span></td>
-                      <td className="text-center"><span className={`badge badge-sm ${row.numbersReleased > 0 ? "badge-warning" : "badge-ghost"}`}>{row.numbersReleased}</span></td>
-                      <td className="text-center"><span className={`badge badge-sm ${waiting > 0 ? "badge-ghost" : "badge-ghost opacity-40"}`}>{waiting}</span></td>
-                      <td className="text-center"><span className="badge badge-sm badge-info">{row.totalAssigned}</span></td>
-                    </tr>
-                    );
-                  })}
-                  {!loading && (data?.dailyStats.length ?? 0) === 0 && (
-                    <tr><td colSpan={6} className="py-8 text-center text-base-content/40">No activity in this period</td></tr>
-                  )}
-                  {loading && <tr><td colSpan={6} className="py-8 text-center text-base-content/40">Loading…</td></tr>}
-                </tbody>
-                {!loading && (data?.dailyStats.length ?? 0) > 0 && (
-                  <tfoot>
-                    <tr className="font-semibold border-t-2 border-base-300">
-                      <td colSpan={2}>Period total</td>
-                      <td className="text-center">
-                        <span className="badge badge-sm badge-success">
-                          {data!.dailyStats.reduce((s, r) => s + r.smsReceived, 0)}
-                        </span>
-                      </td>
-                      <td className="text-center">
-                        <span className="badge badge-sm badge-warning">
-                          {data!.dailyStats.reduce((s, r) => s + r.numbersReleased, 0)}
-                        </span>
-                      </td>
-                      <td className="text-center">
-                        <span className="badge badge-sm badge-ghost">
-                          {data!.dailyStats.reduce(
-                            (s, r) =>
-                              s +
-                              (r.inProgress ??
-                                Math.max(0, r.totalAssigned - r.smsReceived - r.numbersReleased)),
-                            0,
-                          )}
-                        </span>
-                      </td>
-                      <td className="text-center">
-                        <span className="badge badge-sm badge-info">
-                          {data!.dailyStats.reduce((s, r) => s + r.totalAssigned, 0)}
-                        </span>
-                      </td>
-                    </tr>
-                  </tfoot>
-                )}
-              </table>
-            </div>
+            {loading ? (
+              <p className="px-5 py-10 text-center text-base-content/40">Loading…</p>
+            ) : dailyStatsByDate.length === 0 ? (
+              <p className="px-5 py-10 text-center text-base-content/40">No activity in this period</p>
+            ) : (
+              <div className="divide-y divide-base-300">
+                {dailyStatsByDate.map((group, groupIndex) => {
+                  const dayTotals = sumDailyRows(group.rows);
+                  return (
+                    <section
+                      key={group.date}
+                      className={groupIndex % 2 === 1 ? "bg-base-200/25" : ""}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-base-300/80 bg-base-200/50 px-5 py-3">
+                        <div>
+                          <p className="font-semibold text-base-content">
+                            {formatDateKeyLongBd(group.date)}
+                          </p>
+                          <p className="text-xs text-base-content/45">
+                            {formatDateKeyShortBd(group.date)} · {group.rows.length} worker
+                            {group.rows.length === 1 ? "" : "s"}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 text-xs">
+                          <span className="rounded-full bg-success/15 px-2.5 py-1 font-medium text-success">
+                            SMS {dayTotals.smsReceived}
+                          </span>
+                          <span className="rounded-full bg-warning/15 px-2.5 py-1 font-medium text-warning">
+                            Released {dayTotals.numbersReleased}
+                          </span>
+                          <span className="rounded-full bg-base-300/60 px-2.5 py-1 font-medium">
+                            Waiting {dayTotals.waiting}
+                          </span>
+                          <span className="rounded-full bg-info/15 px-2.5 py-1 font-medium text-info">
+                            Total {dayTotals.totalAssigned}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="table table-sm table-zebra">
+                          <thead>
+                            <tr className="text-xs uppercase tracking-wide text-base-content/50">
+                              <th>Username</th>
+                              <th className="text-center">
+                                <span className="inline-flex items-center justify-center gap-1">
+                                  <CheckCircle className="h-3 w-3 text-success" />
+                                  SMS
+                                </span>
+                              </th>
+                              <th className="text-center">
+                                <span className="inline-flex items-center justify-center gap-1">
+                                  <XCircle className="h-3 w-3 text-warning" />
+                                  Released
+                                </span>
+                              </th>
+                              <th className="text-center">Waiting</th>
+                              <th className="text-center">
+                                <span className="inline-flex items-center justify-center gap-1">
+                                  <Phone className="h-3 w-3 text-info" />
+                                  Total
+                                </span>
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {group.rows.map((row) => {
+                              const waiting = dailyRowWaiting(row);
+                              return (
+                                <tr key={`${group.date}-${row.userId}`}>
+                                  <td className="font-medium">{row.username}</td>
+                                  <td className="text-center">
+                                    <span
+                                      className={`badge badge-sm ${row.smsReceived > 0 ? "badge-success" : "badge-ghost"}`}
+                                    >
+                                      {row.smsReceived}
+                                    </span>
+                                  </td>
+                                  <td className="text-center">
+                                    <span
+                                      className={`badge badge-sm ${row.numbersReleased > 0 ? "badge-warning" : "badge-ghost"}`}
+                                    >
+                                      {row.numbersReleased}
+                                    </span>
+                                  </td>
+                                  <td className="text-center">
+                                    <span
+                                      className={`badge badge-sm ${waiting > 0 ? "badge-ghost" : "badge-ghost opacity-40"}`}
+                                    >
+                                      {waiting}
+                                    </span>
+                                  </td>
+                                  <td className="text-center">
+                                    <span className="badge badge-sm badge-info">
+                                      {row.totalAssigned}
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </section>
+                  );
+                })}
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t-2 border-base-300 bg-base-200/40 px-5 py-3 font-semibold">
+                  <span>30-day period total</span>
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <span className="badge badge-sm badge-success">
+                      SMS {dailyGrandTotals.smsReceived}
+                    </span>
+                    <span className="badge badge-sm badge-warning">
+                      Released {dailyGrandTotals.numbersReleased}
+                    </span>
+                    <span className="badge badge-sm badge-ghost">
+                      Waiting {dailyGrandTotals.waiting}
+                    </span>
+                    <span className="badge badge-sm badge-info">
+                      Total {dailyGrandTotals.totalAssigned}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
         )}
@@ -1041,6 +1128,9 @@ export default function AdminPage() {
               <div className="flex items-center gap-2">
                 <UserPlus className="h-4 w-4 text-base-content/50" />
                 <h2 className="font-semibold">User Management</h2>
+                <span className="text-xs text-base-content/45">
+                  {workerCount} / {MAX_WORKER_ACCOUNTS} workers
+                </span>
               </div>
               <div className="flex items-center gap-2">
                 <button onClick={() => setShowPasswords((v) => !v)} className="btn btn-ghost btn-xs gap-1">
